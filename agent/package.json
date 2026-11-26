@@ -1,0 +1,27 @@
+{
+  "name": "@pips/agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "tick": "tsx src/tick-cli.ts",
+    "digest": "tsx src/digest-cli.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pips/shared": "*",
+    "better-sqlite3": "^12.4.1",
+    "node-cron": "^4.2.1",
+    "openai": "^6.9.1",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,46 @@
+# Secrets. .env.example is the only env file that belongs in git.
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+
+# SQLite and other local databases
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*-wal
+*-shm
+
+# Runtime data. The app writes the database under data/.
+# Keep the folders, ignore everything that shows up inside them.
+/data/*
+!/data/.gitkeep
+/memory/*
+!/memory/.gitkeep
+!/memory/journal/
+/memory/journal/*
+!/memory/journal/.gitkeep
+/published/*
+!/published/.gitkeep
+/archive/*
+!/archive/.gitkeep
+/creations/*
+!/creations/.gitkeep

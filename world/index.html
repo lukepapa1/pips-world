@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#b7d4ea" />
+    <title>Pip's World</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,560;0,9..144,680;1,9..144,560&family=Nunito+Sans:ital,opsz,wght@0,6..12,400;0,6..12,650;0,6..12,750&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="scene"></div>
+    <div id="ui">
+      <header id="topbar">
+        <div id="brand">
+          <p class="mark">Pip's World</p>
+          <p id="clock"><span id="presence"></span><span id="clock-text">Connecting…</span></p>
+          <p id="season-chip"><span id="season-icon" aria-hidden="true"></span><span id="season-label">Season</span></p>
+          <p id="browsing" hidden></p>
+          <div id="season-switch" role="group" aria-label="Preview season">
+            <button type="button" data-season="spring">Spring</button>
+            <button type="button" data-season="summer">Summer</button>
+            <button type="button" data-season="autumn">Autumn</button>
+            <button type="button" data-season="winter">Winter</button>
+            <button type="button" data-season="auto">Auto</button>
+          </div>
+        </div>
+        <div id="actions">
+          <button type="button" id="open-digest">
+            Digest <span id="digest-count" class="count" hidden>0</span>
+          </button>
+          <button type="button" id="open-chat">Chat</button>
+          <button type="button" id="open-diary">
+            Diary <span id="diary-count" class="count" hidden>0</span>
+          </button>
+          <button type="button" id="open-mailbox">
+            Mailbox <span id="mail-count" class="count" hidden>0</span>
+          </button>
+          <button type="button" id="pause" aria-pressed="false">Pause</button>
+          <button type="button" id="quality" aria-pressed="true" aria-label="Graphics quality: high">High</button>
+        </div>
+      </header>
+
+      <div id="banner" role="status" hidden>
+        <strong>PAUSED</strong>
+        <span>Pip stays put until you resume.</span>
+      </div>
+
+      <section id="feed" aria-label="Activity">
+        <header>
+          <h2>Activity</h2>
+          <button type="button" id="feed-toggle" aria-expanded="true">Hide</button>
+        </header>
+        <div id="feed-list" aria-live="polite"></div>
+      </section>
+
+      <div id="scrim" hidden></div>
+
+      <section id="digest" role="dialog" aria-modal="true" aria-labelledby="digest-headline" hidden>
+        <header>
+          <div>
+            <p id="digest-day">Day</p>
+            <h2 id="digest-headline">Today</h2>
+          </div>
+          <button type="button" class="close" data-close="digest">Close</button>
+        </header>
+        <div id="digest-nav">
+          <button type="button" id="digest-older">Older</button>
+          <span id="digest-place"></span>
+          <button type="button" id="digest-newer">Newer</button>
+        </div>
+        <div id="digest-body" class="panel-body"></div>
+      </section>
+
+      <section id="chat" class="panel" role="dialog" aria-modal="true" aria-labelledby="chat-title" hidden>
+        <header>
+          <div>
+            <h2 id="chat-title">Chat</h2>
+            <p id="chat-sub">Talk with Pip</p>
+          </div>
+          <button type="button" class="close" data-close="chat">Close</button>
+        </header>
+        <div id="chat-log" class="panel-body"></div>
+        <form id="chat-form">
+          <input id="chat-input" name="text" maxlength="2000" autocomplete="off" placeholder="Say something to Pip" />
+          <button type="submit" id="chat-send">Send</button>
+        </form>
+      </section>
+
+      <section id="diary" class="panel" role="dialog" aria-modal="true" aria-labelledby="diary-title" hidden>
+        <header>
+          <div>
+            <h2 id="diary-title">Diary</h2>
+            <p id="diary-sub">Newest first, grouped by day</p>
+          </div>
+          <button type="button" class="close" data-close="diary">Close</button>
+        </header>
+        <div id="diary-body" class="panel-body"></div>
+      </section>
+
+      <section id="mailbox" class="panel" role="dialog" aria-modal="true" aria-labelledby="mail-title" hidden>
+        <header>
+          <div>
+            <h2 id="mail-title">Mailbox</h2>
+            <p id="mail-sub">Requests waiting for you</p>
+          </div>
+          <button type="button" class="close" data-close="mailbox">Close</button>
+        </header>
+        <div id="mailbox-body" class="panel-body"></div>
+      </section>
+
+      <div id="toast" role="status" hidden></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

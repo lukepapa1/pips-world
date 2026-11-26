@@ -1,0 +1,24 @@
+import { connect, send } from "./socket";
+import { mountScene, type SceneHandle } from "./render/scene";
+import { createUI } from "./ui";
+import { getState, subscribe } from "./state";
+
+const sceneHost = document.getElementById("scene");
+if (!sceneHost) throw new Error("Missing #scene");
+
+let scene: SceneHandle;
+const ui = createUI(send, (visual) => scene.setChat(visual.open, visual.reply));
+scene = mountScene(sceneHost, (action) => {
+  if (action === "diary") ui.openDiary();
+  if (action === "mailbox") ui.openMailbox();
+  if (action === "chat") ui.openChat();
+});
+
+subscribe((state) => {
+  scene.sync(state);
+  ui.sync(state);
+});
+
+ui.sync(getState());
+scene.sync(getState());
+connect();

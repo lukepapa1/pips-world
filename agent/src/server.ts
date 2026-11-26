@@ -1,0 +1,287 @@
+import http from "node:http";
+import { WebSocketServer, type RawData } from "ws";
+import type { ClientMessage, SeasonPreview, SnapshotMessage } from "@pips/shared";
+import { isSeason } from "@pips/shared";
+import {
+  decideRequest,
+  isPaused,
+  listDiary,
+  listDigests,
+  listEvents,
+  listJournal,
+  listRequests,
+  markAllDiaryRead,
+  markDigestRead,
+  maxTick,
+  setPausedFlag,
+} from "./db.js";
+import { dayFromTick } from "@pips/shared";
+import { chatEnabled, chatHistory, replyToChat } from "./chat.js";
+import { demoMode } from "./env.js";
+import { addSocket, broadcast, removeSocket } from "./hub.js";
+import { generateDailyDigest, resolveDigestDay } from "./digest.js";
+import { tickInProgress, runAgentTick } from "./loop.js";
+import { currentWorldState, setSeasonPreview } from "./season.js";
+import { currentTick } from "./tickState.js";
+
+function snapshot(): SnapshotMessage {
+  const tick = Math.max(currentTick(), maxTick());
+  return {
+    type: "snapshot",
+    events: listEvents(),
+    diary: listDiary(),
+    journal: listJournal(),
+    requests: listRequests(),
+    digests: listDigests(),
+    paused: isPaused(),
+    tick,
+    day: dayFromTick(tick),
+    world: currentWorldState(),
+  };
+}
+
+function textOf(data: RawData): string {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  return Buffer.from(data).toString("utf8");
+}
+
+function parseClientMessage(raw: string): ClientMessage | null {
+  if (raw.length > 8_000) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  const message = value as {
+    type?: unknown;
+    requestId?: unknown;
+    decision?: unknown;
+    paused?: unknown;
+    season?: unknown;
+    id?: unknown;
+  };
+  if (message.type === "mark_diary_read") return { type: "mark_diary_read" };
+  if (message.type === "mark_digest_read" && typeof message.id === "string" && message.id.trim()) {
+    return { type: "mark_digest_read", id: message.id };
+  }
+  if (message.type === "set_season_preview" && isPreview(message.season)) {
+    return { type: "set_season_preview", season: message.season };
+  }
+  if (message.type === "set_paused" && typeof message.paused === "boolean") {
+    return { type: "set_paused", paused: message.paused };
+  }
+  if (
+    message.type === "decide_request" &&
+    typeof message.requestId === "string" &&
+    (message.decision === "approved" || message.decision === "denied")
+  ) {
+    return {
+      type: "decide_request",
+      requestId: message.requestId,
+      decision: message.decision,
+    };
+  }
+  return null;
+}
+
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 20_000) {
+        reject(new Error("body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+function isLocal(req: http.IncomingMessage): boolean {
+  const address = req.socket.remoteAddress ?? "";
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
+function isPreview(value: unknown): value is SeasonPreview {
+  return value === "auto" || isSeason(value);
+}
+
+export function startServer(): http.Server {
+  const port = Number(process.env.PORT) || 3001;
+  const server = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/api/health") {
+      const snap = snapshot();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          ok: true,
+          tick: snap.tick,
+          day: snap.day,
+          paused: snap.paused,
+          events: snap.events.length,
+          season: snap.world.season,
+          preview: snap.world.preview,
+          mode: demoMode() ? "demo" : "agent",
+          chat: chatEnabled(),
+        }),
+      );
+      return;
+    }
+    if (req.method === "GET" && req.url?.startsWith("/api/chat")) {
+      const session = new URL(req.url, "http://127.0.0.1").searchParams.get("session");
+      const history = chatHistory(session);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(history));
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/chat") {
+      readBody(req)
+        .then((raw) => {
+          const body = JSON.parse(raw) as { sessionId?: unknown; text?: unknown };
+          const text = typeof body.text === "string" ? body.text : "";
+          return replyToChat(body.sessionId, text);
+        })
+        .then((result) => {
+          res.writeHead(result.status, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((error: unknown) => {
+          console.error("Chat failed:", error);
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, message: "Could not read that message." }));
+        });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/digest") {
+      if (!isLocal(req)) {
+        res.writeHead(403, { "content-type": "text/plain" });
+        res.end("Local only");
+        return;
+      }
+      if (tickInProgress()) {
+        res.writeHead(409, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, message: "A tick is already running." }));
+        return;
+      }
+      readBody(req)
+        .then((raw) => {
+          let requested: number | undefined;
+          if (raw.trim()) {
+            const body = JSON.parse(raw) as { day?: unknown };
+            if (body.day !== undefined) {
+              if (typeof body.day !== "number") throw new Error("Day must be a number.");
+              requested = body.day;
+            }
+          }
+          const day = resolveDigestDay(requested);
+          return generateDailyDigest(day, true).then((result) => ({ day, result }));
+        })
+        .then(({ day, result }) => {
+          if (result) broadcast({ type: "digest", digest: result.digest });
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true, day, digest: result?.digest ?? null, channels: result?.channels ?? [] }));
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : "Digest failed.";
+          console.error("Digest failed:", message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, message }));
+        });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/tick") {
+      if (!isLocal(req)) {
+        res.writeHead(403, { "content-type": "text/plain" });
+        res.end("Local only");
+        return;
+      }
+      if (demoMode()) {
+        res.writeHead(409, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, message: "DEMO_MODE is on. Unset it to run a real tick." }));
+        return;
+      }
+      runAgentTick()
+        .then((result) => {
+          res.writeHead(result.ok ? 200 : 409, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((error: unknown) => {
+          console.error("Tick failed:", error);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, message: "Tick failed." }));
+        });
+      return;
+    }
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("Not found");
+  });
+
+  const wss = new WebSocketServer({ server, path: "/ws" });
+  wss.on("connection", (socket) => {
+    addSocket(socket);
+    socket.send(JSON.stringify(snapshot()));
+
+    socket.on("message", (data) => {
+      const message = parseClientMessage(textOf(data));
+      if (!message) return;
+
+      if (message.type === "mark_diary_read") {
+        const readAt = markAllDiaryRead();
+        if (readAt) broadcast({ type: "diary_read", readAt });
+        return;
+      }
+
+      if (message.type === "mark_digest_read") {
+        const marked = markDigestRead(message.id);
+        if (marked) broadcast({ type: "digest_read", id: marked.id, readAt: marked.readAt });
+        return;
+      }
+
+      if (message.type === "set_season_preview") {
+        setSeasonPreview(message.season);
+        return;
+      }
+
+      const tick = Math.max(currentTick(), maxTick());
+      if (message.type === "set_paused") {
+        const event = setPausedFlag(message.paused, tick);
+        if (event) {
+          broadcast({ type: "event", event });
+          console.log(message.paused ? "PAUSED flag set." : "PAUSED flag cleared.");
+        }
+        return;
+      }
+
+      const event = decideRequest(message.requestId, message.decision, tick);
+      if (!event) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "That request is no longer pending.",
+          }),
+        );
+        return;
+      }
+      broadcast({ type: "event", event });
+      console.log(`Request ${message.decision}: ${message.requestId}`);
+    });
+
+    socket.on("close", () => removeSocket(socket));
+  });
+
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Agent listening on http://localhost:${port}`);
+    console.log(`WebSocket at ws://localhost:${port}/ws`);
+  });
+
+  return server;
+}
