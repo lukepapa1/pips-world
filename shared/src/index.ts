@@ -50,6 +50,10 @@ export type Season = (typeof SEASONS)[number];
 
 export type SeasonPreview = Season | "auto";
 
+export const DAY_PERIODS = ["dawn", "morning", "afternoon", "dusk", "night"] as const;
+
+export type DayPeriod = (typeof DAY_PERIODS)[number];
+
 export type WorldState = {
   season: Season;
   nextSeason: Season;
@@ -57,16 +61,30 @@ export type WorldState = {
   blend: number;
   /** 0 at local midnight, 1 at the next midnight. */
   timeOfDay: number;
+  /** Fractional local hours of sunrise and sunset. */
   sunrise: number;
   sunset: number;
-  /** Peak sun height in radians at the middle of the day. */
+  /** Peak sun height in radians at solar noon. */
   noonElevation: number;
+  /** Civil date in the village timezone, YYYY-MM-DD. */
+  date: string;
+  /** Village clock, HH:mm. */
+  time: string;
+  period: DayPeriod;
+  /** IANA zone, such as Australia/Melbourne. */
+  zone: string;
+  /** Short name, such as AEDT. */
+  zoneName: string;
   preview: SeasonPreview;
   sampledAt: string;
 };
 
 export function isSeason(value: unknown): value is Season {
   return typeof value === "string" && (SEASONS as readonly string[]).includes(value);
+}
+
+export function isDayPeriod(value: unknown): value is DayPeriod {
+  return typeof value === "string" && (DAY_PERIODS as readonly string[]).includes(value);
 }
 
 export function isWorldState(value: unknown): value is WorldState {
@@ -80,6 +98,12 @@ export function isWorldState(value: unknown): value is WorldState {
     typeof state.sunrise === "number" &&
     typeof state.sunset === "number" &&
     typeof state.noonElevation === "number" &&
+    typeof state.date === "string" &&
+    typeof state.time === "string" &&
+    isDayPeriod(state.period) &&
+    typeof state.zone === "string" &&
+    state.zone.length > 0 &&
+    typeof state.zoneName === "string" &&
     (state.preview === "auto" || isSeason(state.preview)) &&
     typeof state.sampledAt === "string"
   );

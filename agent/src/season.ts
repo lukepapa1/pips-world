@@ -1,4 +1,15 @@
+import { DateTime } from "luxon";
 import { type Season, type SeasonPreview, type WorldState } from "@pips/shared";
+import {
+  formatClockHours,
+  periodAt,
+  readClockConfig,
+  seasonForMonth,
+  seasonMode,
+  seasonMonths,
+  villageClock,
+  type SunMarks,
+} from "./clock.js";
 import {
   getSetting,
   lastRecordedSeason,
@@ -17,36 +28,6 @@ const DAYLIGHT: Record<Season, { sunrise: number; sunset: number; noonElevation:
   winter: { sunrise: 7.5, sunset: 16.9, noonElevation: 0.4 },
 };
 
-const SOUTH = [
-  "summer",
-  "summer",
-  "autumn",
-  "autumn",
-  "autumn",
-  "winter",
-  "winter",
-  "winter",
-  "spring",
-  "spring",
-  "spring",
-  "summer",
-] as const;
-
-const NORTH = [
-  "winter",
-  "winter",
-  "spring",
-  "spring",
-  "spring",
-  "summer",
-  "summer",
-  "summer",
-  "autumn",
-  "autumn",
-  "autumn",
-  "winter",
-] as const;
-
 type Calendar = {
   season: Season;
   nextSeason: Season;
@@ -62,7 +43,7 @@ function hemisphere(): "north" | "south" {
 }
 
 function mode(): "real" | "accelerated" {
-  return process.env.SEASON_MODE === "accelerated" ? "accelerated" : "real";
+  return seasonMode();
 }
 
 function seasonLengthDays(): number {
@@ -76,18 +57,24 @@ function blendFor(progress: number): number {
 }
 
 function realCalendar(now: Date): Calendar {
-  const months = hemisphere() === "north" ? NORTH : SOUTH;
-  const season = months[now.getMonth()] ?? "spring";
-  const startMonth = season === "summer" && hemisphere() === "south"
-    ? 11
-    : season === "winter" && hemisphere() === "north"
+  const zone = readClockConfig().zone;
+  const dt = DateTime.fromJSDate(now, { zone });
+  const monthIndex = dt.month - 1;
+  const hemi = hemisphere();
+  const months = seasonMonths(hemi);
+  const season = seasonForMonth(monthIndex, hemi);
+  const startMonth =
+    season === "summer" && hemi === "south"
       ? 11
-      : months.findIndex((name) => name === season);
-  let startYear = now.getFullYear();
-  if (startMonth === 11 && now.getMonth() < 6) startYear -= 1;
-  const start = new Date(startYear, startMonth, 1).getTime();
-  const end = new Date(startYear, startMonth + 3, 1).getTime();
-  const progress = end > start ? (now.getTime() - start) / (end - start) : 0;
+      : season === "winter" && hemi === "north"
+        ? 11
+        : months.findIndex((name) => name === season);
+  let startYear = dt.year;
+  if (startMonth === 11 && monthIndex < 6) startYear -= 1;
+  const start = DateTime.fromObject({ year: startYear, month: startMonth + 1, day: 1 }, { zone });
+  const end = start.plus({ months: 3 });
+  const span = end.toMillis() - start.toMillis();
+  const progress = span > 0 ? (dt.toMillis() - start.toMillis()) / span : 0;
   return { season, nextSeason: nextSeason(season), blend: blendFor(progress) };
 }
 
@@ -123,27 +110,43 @@ function daylight(season: Season, next: Season, blend: number) {
   };
 }
 
-function timeOfDay(now: Date): number {
-  const hours = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
-  return hours / 24;
+function lightFrom(season: Season, next: Season, blend: number, clock: ReturnType<typeof villageClock>): SunMarks {
+  if (clock.validSun) return clock;
+  const table = daylight(season, next, blend);
+  const marks: SunMarks = {
+    dawn: table.sunrise - 0.45,
+    sunrise: table.sunrise,
+    solarNoon: (table.sunrise + table.sunset) / 2,
+    sunset: table.sunset,
+    dusk: table.sunset + 0.45,
+    noonElevation: table.noonElevation,
+    validSun: false,
+  };
+  return marks;
 }
 
 /** The season and clock the world is showing. A future tick can read this. */
 export function currentWorldState(now = new Date()): WorldState {
+  const clock = villageClock(now);
   const calendar = calendarSeason(now);
   const preview = previewSetting();
   const season = preview === "auto" ? calendar.season : preview;
   const next = preview === "auto" ? calendar.nextSeason : nextSeason(season);
   const blend = preview === "auto" ? calendar.blend : 0;
-  const light = daylight(season, next, blend);
+  const light = lightFrom(season, next, blend, clock);
   return {
     season,
     nextSeason: next,
     blend,
-    timeOfDay: timeOfDay(now),
+    timeOfDay: clock.timeOfDay,
     sunrise: light.sunrise,
     sunset: light.sunset,
     noonElevation: light.noonElevation,
+    date: clock.date,
+    time: clock.time,
+    period: clock.validSun ? clock.period : periodAt(clock.hours, light),
+    zone: clock.zone,
+    zoneName: clock.zoneName,
     preview,
     sampledAt: now.toISOString(),
   };
@@ -189,8 +192,9 @@ export function startSeasonClock(): void {
   if (getSetting("season_preview") !== "auto") setSetting("season_preview", "auto");
   publishWorldState(true);
   timer = setInterval(() => publishWorldState(false), 10_000);
+  const clock = villageClock();
   console.log(
-    `Seasons: ${mode()}, hemisphere ${hemisphere()}${mode() === "accelerated" ? `, every ${seasonLengthDays()} days` : ""}.`,
+    `Seasons: ${mode()}, hemisphere ${hemisphere()}${mode() === "accelerated" ? `, every ${seasonLengthDays()} days` : ""}. Village clock ${clock.zone} (${clock.zoneName}). Sunrise ${formatClockHours(clock.sunrise)}, sunset ${formatClockHours(clock.sunset)}.`,
   );
 }
 

@@ -38,10 +38,24 @@ function must<T extends HTMLElement>(id: string): T {
   return element as T;
 }
 
-function formatTime(iso: string): string {
+function formatWhen(iso: string): { time: string; title: string } {
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (Number.isNaN(date.getTime())) return { time: "", title: "" };
+  try {
+    return {
+      time: date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      title: date.toLocaleString([], {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      }),
+    };
+  } catch {
+    return { time: "", title: "" };
+  }
 }
 
 const SEASON_ICON: Record<Season, string> = {
@@ -76,9 +90,10 @@ function diaryMarkup(entries: DiaryRow[]): string {
     html += `<section class="day"><h3>Day ${day}</h3>`;
     for (const entry of list) {
       const hour = hourFromTick(entry.tick);
+      const when = formatWhen(entry.createdAt);
       html += `<article class="entry${entry.readAt ? "" : " unread"}">
         <header>
-          <span>${hour > 0 ? `Hour ${hour}` : "Note"}</span>
+          <span>${hour > 0 ? `Hour ${hour}` : "Note"}${when.time ? ` · ${esc(when.time)}` : ""}</span>
           ${entry.readAt ? "" : `<span class="new">New</span>`}
         </header>
         <p>${esc(entry.body)}</p>
@@ -167,11 +182,12 @@ function feedMarkup(state: ClientState): string {
       html += `<p class="feed-day">Day ${day}</p>`;
     }
     const hour = eventHour(event);
+    const when = formatWhen(event.createdAt);
     html += `<article class="feed-item ${eventClass(event)}">
       <header>
         <span class="chip">${esc(eventLabel(event))}</span>
         ${hour > 0 ? `<span class="hour">Hour ${hour}</span>` : ""}
-        <time datetime="${esc(event.createdAt)}">${esc(formatTime(event.createdAt))}</time>
+        <time datetime="${esc(event.createdAt)}" title="${esc(when.title)}">${esc(when.time)}</time>
       </header>
       <p>${esc(eventText(event))}</p>
     </article>`;
@@ -242,8 +258,53 @@ export function createUI(
   const openAlertsButton = must<HTMLButtonElement>("open-alerts");
   const seasonIcon = must<HTMLElement>("season-icon");
   const seasonLabel = must<HTMLElement>("season-label");
+  const villageClock = must<HTMLElement>("village-clock");
 
   let sawConnection = false;
+  let villageZone = "";
+  let villageZoneName = "";
+
+  function viewerZone(): string {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  function formatInZone(date: Date, zone: string, withName = false): string {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: zone,
+      hour: "numeric",
+      minute: "2-digit",
+      ...(withName ? { timeZoneName: "short" as const } : {}),
+    }).format(date);
+  }
+
+  function paintVillageClock(): void {
+    if (!villageZone) {
+      villageClock.hidden = true;
+      villageClock.textContent = "";
+      villageClock.removeAttribute("title");
+      return;
+    }
+    const now = new Date();
+    try {
+      const time = formatInZone(now, villageZone);
+      villageClock.hidden = false;
+      villageClock.textContent = villageZoneName ? `${time} ${villageZoneName}` : time;
+      const mine = viewerZone();
+      if (mine && mine !== villageZone) {
+        villageClock.title = `Your time: ${formatInZone(now, mine, true)}`;
+      } else {
+        villageClock.removeAttribute("title");
+      }
+    } catch {
+      villageClock.hidden = true;
+    }
+  }
+
+  window.setInterval(paintVillageClock, 15_000);
   let toastTimer = 0;
   let feedOpen = true;
   let feedSig = "";
@@ -340,6 +401,7 @@ export function createUI(
     const sorted = sortedDigests(state);
     if (sorted.length === 0) {
       digestDay.textContent = "Digest";
+      digestDay.title = "";
       digestHeadline.textContent = "No day summarised yet.";
       digestPlace.textContent = "";
       digestOlder.disabled = true;
@@ -357,7 +419,9 @@ export function createUI(
     digestOlder.disabled = index >= sorted.length - 1;
     digestNewer.disabled = index <= 0;
     digestPlace.textContent = `${index + 1} of ${sorted.length}`;
-    digestDay.textContent = `Day ${current.day}`;
+    const when = formatWhen(current.createdAt);
+    digestDay.textContent = when.time ? `Day ${current.day} · ${when.time}` : `Day ${current.day}`;
+    digestDay.title = when.title;
     const sig = `${current.id}:${current.readAt ?? ""}:${current.headline}:${index}`;
     if (sig === digestSig) return;
     digestHeadline.textContent = current.headline;
@@ -435,6 +499,9 @@ export function createUI(
         const hour = hourFromTick(state.tick);
         clockText.textContent = hour > 0 ? `Day ${state.day} · Hour ${hour}` : `Day ${state.day}`;
       }
+      villageZone = state.connected ? (state.world?.zone ?? "") : "";
+      villageZoneName = state.connected ? (state.world?.zoneName ?? "") : "";
+      paintVillageClock();
       presence.classList.toggle("on", state.connected);
       browsing.hidden = !state.browsing;
       browsing.textContent = state.browsing ? `browsing: ${state.browsing}` : "";

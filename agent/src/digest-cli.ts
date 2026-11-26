@@ -1,9 +1,11 @@
 import path from "node:path";
+import { applyOwnerTimezone } from "./clock.js";
 import { closeDatabase, openDatabase } from "./db.js";
 import { generateDailyDigest, resolveDigestDay } from "./digest.js";
 import { loadEnv, repoRoot } from "./env.js";
 
 loadEnv(path.join(repoRoot(), ".env"));
+applyOwnerTimezone();
 
 function requestedDay(): number | undefined {
   const raw = process.argv[2];

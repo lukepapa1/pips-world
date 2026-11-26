@@ -141,6 +141,14 @@ button:disabled {
   box-shadow: 0 0 0 3px rgba(63, 107, 74, 0.16);
 }
 
+#village-clock {
+  margin: 2px 0 0;
+  color: var(--navy);
+  font-size: 0.82rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
 #season-chip {
   margin: 8px 0 0;
   display: flex;

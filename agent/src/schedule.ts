@@ -1,8 +1,17 @@
 import cron from "node-cron";
+import {
+  dayBoundaryCron,
+  digestCron,
+  ownerDate,
+  readClockConfig,
+  weeklyCron,
+} from "./clock.js";
+import { setSetting } from "./db.js";
+import { deliverDueDigest } from "./digest.js";
 import { redactSecrets } from "./env.js";
 import { runAgentTick } from "./loop.js";
 
-let task: { stop: () => void } | null = null;
+let tasks: Array<{ stop: () => void | Promise<void>; destroy?: () => void | Promise<void> }> = [];
 let running = false;
 
 export function cronExpression(): string {
@@ -18,18 +27,25 @@ export function cronExpression(): string {
   return minutes === 1 ? "* * * * *" : `*/${minutes} * * * *`;
 }
 
+function track(expression: string, name: string, fn: () => void): void {
+  if (!cron.validate(expression)) throw new Error(`Invalid ${name} schedule: ${expression}`);
+  const zone = readClockConfig().zone;
+  tasks.push(cron.schedule(expression, fn, { timezone: zone, name }));
+}
+
 export function startScheduler(): void {
+  if (tasks.length > 0) stopScheduler();
+  running = true;
+  const config = readClockConfig();
   const expression = cronExpression();
-  if (!cron.validate(expression)) {
-    throw new Error(`Invalid tick schedule: ${expression}`);
-  }
   const model = process.env.LLM_MODEL ?? "(unset)";
-  console.log(`Agent loop on. Model ${model}. Schedule: ${expression}.`);
+  console.log(
+    `Agent loop on. Model ${model}. Tick ${expression} in ${config.zone}. Day starts ${config.dayStartHour}:00. Digest ${config.digestHour}:00. Weekly reflection Sunday ${config.digestHour}:00.`,
+  );
   if (!process.env.LLM_BASE_URL || !process.env.LLM_API_KEY || !process.env.LLM_MODEL) {
     console.warn("LLM_BASE_URL, LLM_API_KEY and LLM_MODEL must be set before a tick can run.");
   }
-  running = true;
-  task = cron.schedule(expression, () => {
+  track(expression, "pip-tick", () => {
     if (!running) return;
     runAgentTick()
       .then((result) => {
@@ -40,10 +56,30 @@ export function startScheduler(): void {
         console.error(redactSecrets(`Tick failed: ${message}`));
       });
   });
+  track(dayBoundaryCron(config.dayStartHour), "pip-day", () => {
+    if (!running) return;
+    console.log(`Day boundary. The day is ${ownerDate(new Date())}.`);
+  });
+  track(digestCron(config.digestHour), "pip-digest", () => {
+    if (!running) return;
+    deliverDueDigest().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Digest send failed.";
+      console.error(redactSecrets(`Digest send failed: ${message}`));
+    });
+  });
+  track(weeklyCron(config.digestHour), "pip-week", () => {
+    if (!running) return;
+    const at = new Date().toISOString();
+    setSetting("last_weekly_reflection", at);
+    console.log(`Weekly reflection window ${at}.`);
+  });
 }
 
 export function stopScheduler(): void {
   running = false;
-  task?.stop();
-  task = null;
+  for (const task of tasks) {
+    void task.stop();
+    void task.destroy?.();
+  }
+  tasks = [];
 }

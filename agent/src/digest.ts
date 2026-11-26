@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { hourFromTick, type DigestItem, type DigestRow, type DigestSections, type WorldEvent } from "@pips/shared";
+import { readClockConfig, shouldSendDigest } from "./clock.js";
 import {
   diaryForDay,
   digestForDay,
   eventsForDay,
+  getSetting,
   journalForDay,
   latestSourceDay,
   listRequests,
   saveDigest,
+  setSetting,
 } from "./db.js";
 import { CapError, LlmError, speak } from "./llm.js";
 import { readMemory } from "./memory.js";
@@ -217,6 +220,34 @@ export async function generateDailyDigest(
     createdAt: new Date().toISOString(),
     readAt: null,
   });
-  const channels = await notifyDigest({ headline: digest.headline, url: digestLink() });
+  const channels = await announceDigest(digest.day, digest.headline, replace);
   return { digest, channels };
+}
+
+const PENDING_DIGEST = "pending_digest_day";
+
+async function announceDigest(day: number, headline: string, replace: boolean): Promise<string[]> {
+  if (!replace && !shouldSendDigest(new Date())) {
+    setSetting(PENDING_DIGEST, String(day));
+    const hour = String(readClockConfig().digestHour).padStart(2, "0");
+    console.log(`Digest for day ${day} waits until ${hour}:00.`);
+    return [];
+  }
+  if (getSetting(PENDING_DIGEST) === String(day)) setSetting(PENDING_DIGEST, "");
+  return notifyDigest({ headline, url: digestLink() });
+}
+
+export async function deliverDueDigest(now = new Date()): Promise<void> {
+  if (!shouldSendDigest(now)) return;
+  const raw = getSetting(PENDING_DIGEST);
+  if (!raw) return;
+  const day = Number(raw);
+  const digest = Number.isInteger(day) ? digestForDay(day) : null;
+  if (!digest) {
+    setSetting(PENDING_DIGEST, "");
+    return;
+  }
+  const channels = await notifyDigest({ headline: digest.headline, url: digestLink() });
+  setSetting(PENDING_DIGEST, "");
+  console.log(`Digest for day ${day} sent (${channels.join(", ") || "no channel"}).`);
 }

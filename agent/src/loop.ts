@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { dayFromTick, hourFromTick, TICKS_PER_DAY, type WorldEvent } from "@pips/shared";
+import { dateLabel, sinceLastTick } from "./clock.js";
 import {
   acquireTickLock,
   diaryFromTick,
   isPaused,
+  lastTickAt,
   latestJournal,
   listWorldObjects,
   makeEvent,
@@ -138,18 +140,21 @@ function finish(tick: number, kinds: string[], message: string): TickResult {
   return { ok: true, tick, day: dayFromTick(tick), kinds, message };
 }
 
-function worldBrief(): string {
+function worldBrief(tick: number): string {
   const state = currentWorldState();
-  const hours = state.timeOfDay * 24;
-  const hour = Math.floor(hours) % 24;
-  const minute = Math.floor((hours % 1) * 60);
-  const clock = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
   const blend =
     state.blend > 0
       ? ` Season is blending toward ${state.nextSeason} (${state.blend.toFixed(2)}).`
       : "";
   const preview = state.preview === "auto" ? "" : ` The season switcher is previewing ${state.preview}.`;
-  return `World season: ${state.season}.${blend} Local time: ${clock}. Sunrise ${state.sunrise.toFixed(1)}, sunset ${state.sunset.toFixed(1)}.${preview}`;
+  return [
+    `Local date: ${dateLabel(state.date, state.zone)}.`,
+    `Time of day: ${state.period}.`,
+    `Season: ${state.season}.${blend}`,
+    `Day number: ${dayFromTick(tick)}.`,
+    sinceLastTick(lastTickAt()),
+    `Village clock: ${state.time} ${state.zoneName}. Sunrise ${state.sunrise.toFixed(1)}, sunset ${state.sunset.toFixed(1)}.${preview}`,
+  ].join(" ");
 }
 
 function placedBrief(): string {
@@ -166,7 +171,7 @@ function hourContext(tick: number): string {
     .join("\n\n");
   return [
     `This is hour ${hourFromTick(tick)} of day ${dayFromTick(tick)} (tick ${tick}).`,
-    worldBrief(),
+    worldBrief(tick),
     placedBrief(),
     "",
     "Identity file:",

@@ -1,10 +1,12 @@
 import path from "node:path";
+import { applyOwnerTimezone } from "./clock.js";
 import { closeDatabase, openDatabase } from "./db.js";
 import { loadEnv, repoRoot } from "./env.js";
 import { runAgentTick } from "./loop.js";
 import { initTickFromDb } from "./tickState.js";
 
 loadEnv(path.join(repoRoot(), ".env"));
+applyOwnerTimezone();
 
 async function viaServer(): Promise<boolean> {
   const port = Number(process.env.PORT) || 3001;

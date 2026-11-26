@@ -8,19 +8,23 @@
     "start": "NODE_ENV=production tsx src/index.ts",
     "tick": "tsx src/tick-cli.ts",
     "digest": "tsx src/digest-cli.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "tsx --test src/clock.test.ts"
   },
   "dependencies": {
     "@pips/shared": "*",
     "better-sqlite3": "^12.4.1",
+    "luxon": "^3.7.2",
     "node-cron": "^4.2.1",
     "openai": "^6.9.1",
+    "suncalc": "^2.1.4",
     "tsx": "^4.20.6",
     "web-push": "^4.0.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/luxon": "^3.7.6",
     "@types/node": "^24.10.1",
     "@types/ws": "^8.18.1",
     "typescript": "^5.9.3"
