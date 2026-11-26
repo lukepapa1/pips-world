@@ -36,6 +36,7 @@ import {
 } from "./tools.js";
 import { unseenChatNotes } from "./chat.js";
 import { generateDailyDigest } from "./digest.js";
+import { noteNewProjects } from "./alerts.js";
 import { callsLeft, callsToday, noteCall, noteTick, noteTokens, ticksLeft, tokensLeft } from "./usage.js";
 
 const MAX_ROUNDS = 6;
@@ -129,6 +130,7 @@ function capDiary(limit: "calls" | "tokens" | "ticks"): string {
 function finish(tick: number, kinds: string[], message: string): TickResult {
   const at = new Date().toISOString();
   rememberTick(at);
+  void noteNewProjects();
   console.log(`${message}. Calls today: ${callsToday()}.`);
   return { ok: true, tick, day: dayFromTick(tick), kinds, message };
 }

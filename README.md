@@ -17,6 +17,7 @@ Railway’s Railpack builds this repo with no custom builder. The root `package.
    - `SEARCH_API=tavily` and `SEARCH_API_KEY` if Pip should be able to look things up
    - `WORLD_URL` to the public `https://` address Railway gives the service, so a digest notification opens the right page
    - `NTFY_SERVER` and `NTFY_TOPIC` if you want the daily digest pushed to your phone
+   - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` so the installed app can receive alerts
    - `SEASON_MODE=real` and `SEASON_HEMISPHERE=south` (or `north`)
 
    Leave the cap and timing variables empty unless you want to override a default. The full list, with secrets marked, is in `.env.example`.
@@ -34,3 +35,11 @@ OWNER_PASSWORD='choose-a-long-password' npm start
 ```
 
 Open `http://localhost:3001` and log in. `npm run dev` is the split dev server and does not ask for a password until `OWNER_PASSWORD` is set.
+
+## Install
+
+The world is a home-screen app. Log in once in the browser. The login cookie lasts 30 days and stays with the installed app.
+
+On iPhone, open the site in Safari, tap Share, then Add to Home Screen. Alerts need that installed app, then Alerts, then Turn on notifications.
+
+On Android, open the site in Chrome and use Install app, or Add to Home screen from the browser menu. Then open Alerts and turn notifications on.

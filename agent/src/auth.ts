@@ -80,6 +80,7 @@ function secureCookie(req: http.IncomingMessage): boolean {
 }
 
 function cookieHeader(req: http.IncomingMessage, token: string, maxAge: number): string {
+  // Path=/ and SameSite=Lax keep the session in the installed app.
   const secure = secureCookie(req) ? "; Secure" : "";
   return `${COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`;
 }
@@ -147,10 +148,17 @@ export function loginPage(state: "form" | "bad" | "limited" | "off"): string {
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#b7d4ea" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Pip" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Pip's World</title>
   <style>
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #b7d4ea; color: #2a241c; font-family: "Avenir Next", "Segoe UI", sans-serif; }
+    body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; background: #b7d4ea; color: #2a241c; font-family: "Avenir Next", "Segoe UI", sans-serif; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
     main { width: min(360px, calc(100% - 32px)); background: #f6f0e4; border-radius: 22px; padding: 28px 24px; box-shadow: 0 16px 40px rgba(48, 32, 16, 0.16); }
     h1 { font-family: Georgia, serif; font-size: 1.8rem; margin: 0 0 8px; }
     p { margin: 0 0 16px; color: #7a6e60; }
@@ -166,6 +174,9 @@ export function loginPage(state: "form" | "bad" | "limited" | "off"): string {
     <p>${note}</p>
     ${form}
   </main>
+  <script>
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+  </script>
 </body>
 </html>`;
 }

@@ -33,6 +33,7 @@ import { chatEnabled, chatHistory, replyToChat } from "./chat.js";
 import { demoMode } from "./env.js";
 import { addSocket, broadcast, removeSocket } from "./hub.js";
 import { generateDailyDigest, resolveDigestDay } from "./digest.js";
+import { handlePush } from "./push.js";
 import { tickInProgress, runAgentTick } from "./loop.js";
 import { currentWorldState, setSeasonPreview } from "./season.js";
 import { currentTick } from "./tickState.js";
@@ -148,7 +149,8 @@ const FILE_TYPES: Record<string, string> = {
   ".webp": "image/webp",
   ".gif": "image/gif",
   ".ico": "image/x-icon",
-  ".json": "application/json",
+    ".json": "application/json",
+    ".webmanifest": "application/manifest+json",
   ".map": "application/json",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
@@ -195,13 +197,23 @@ function serveWorld(pathname: string, res: http.ServerResponse): boolean {
   }
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
   const ext = path.extname(file).toLowerCase();
-  const cache = ext === ".html" ? "no-store" : "public, max-age=86400";
+  const cache =
+    ext === ".html" || file.endsWith("sw.js") || ext === ".webmanifest" ? "no-store" : "public, max-age=86400";
   res.writeHead(200, {
     "content-type": FILE_TYPES[ext] ?? "application/octet-stream",
     "cache-control": cache,
   });
   fs.createReadStream(file).pipe(res);
   return true;
+}
+
+function publicAsset(pathname: string): boolean {
+  return (
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/sw.js" ||
+    pathname === "/offline.html" ||
+    pathname.startsWith("/icons/")
+  );
 }
 
 function operatorRoute(method: string | undefined, pathname: string): boolean {
@@ -258,7 +270,7 @@ export function startServer(): http.Server {
       loggedOut(req, res);
       return;
     }
-    if (authRequired() && !operatorRoute(req.method, pathname) && !authorized(req)) {
+    if (authRequired() && !operatorRoute(req.method, pathname) && !authorized(req) && !publicAsset(pathname)) {
       if (pathname === "/") {
         sendHtml(res, 200, loginPage("form"));
         return;
@@ -368,6 +380,26 @@ export function startServer(): http.Server {
           console.error(redactSecrets(`Tick failed: ${message}`));
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: false, message: "Tick failed." }));
+        });
+      return;
+    }
+    if (pathname.startsWith("/api/push")) {
+      const method = req.method ?? "GET";
+      const incoming = method === "GET" || method === "HEAD" ? Promise.resolve("") : readBody(req);
+      incoming
+        .then((raw) => handlePush(method, pathname, raw))
+        .then((result) => {
+          if (!result) {
+            res.writeHead(404, { "content-type": "text/plain" });
+            res.end("Not found");
+            return;
+          }
+          sendJson(res, result.status, result.body);
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : "Push failed.";
+          console.error(redactSecrets(`Push failed: ${message}`));
+          sendJson(res, 400, { ok: false, message: "Could not read that." });
         });
       return;
     }

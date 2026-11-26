@@ -20,6 +20,7 @@
 html, body {
   margin: 0;
   height: 100%;
+  min-height: 100dvh;
   overflow: hidden;
   background: var(--sky);
   overscroll-behavior: none;
@@ -97,7 +98,11 @@ button:disabled {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
-  padding: max(12px, env(safe-area-inset-top)) 14px 0;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    max(14px, env(safe-area-inset-right))
+    0
+    max(14px, env(safe-area-inset-left));
   pointer-events: none;
 }
 
@@ -206,7 +211,7 @@ button:disabled {
 
 #banner {
   position: absolute;
-  top: 74px;
+  top: max(74px, calc(env(safe-area-inset-top) + 62px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 6;
@@ -233,9 +238,10 @@ button:disabled {
 
 #feed {
   position: absolute;
-  left: 12px;
+  left: max(12px, env(safe-area-inset-left));
+  right: auto;
   bottom: max(12px, env(safe-area-inset-bottom));
-  width: min(420px, calc(100% - 24px));
+  width: min(420px, calc(100% - max(12px, env(safe-area-inset-left)) - max(12px, env(safe-area-inset-right))));
   max-height: min(240px, 28vh);
   z-index: 4;
   display: flex;
@@ -345,10 +351,10 @@ button:disabled {
 
 #digest {
   position: absolute;
-  top: 78px;
+  top: max(78px, calc(env(safe-area-inset-top) + 66px));
   left: 50%;
   transform: translateX(-50%);
-  width: min(460px, calc(100% - 24px));
+  width: min(460px, calc(100% - max(12px, env(safe-area-inset-left)) - max(12px, env(safe-area-inset-right))));
   max-height: min(72vh, 640px);
   z-index: 6;
   display: flex;
@@ -438,8 +444,8 @@ button:disabled {
 
 .panel {
   position: absolute;
-  top: 74px;
-  right: 12px;
+  top: max(74px, calc(env(safe-area-inset-top) + 62px));
+  right: max(12px, env(safe-area-inset-right));
   bottom: max(12px, env(safe-area-inset-bottom));
   width: min(400px, calc(100% - 24px));
   z-index: 5;
@@ -529,7 +535,7 @@ button:disabled {
 
 #toast {
   position: absolute;
-  top: 78px;
+  top: max(78px, calc(env(safe-area-inset-top) + 66px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 7;
@@ -641,15 +647,41 @@ button:disabled {
 
 .sign-badge[hidden] { display: none !important; }
 
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.switch input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--navy);
+}
+
+#alerts-enable,
+#alerts-test {
+  margin-top: 14px;
+  background: var(--navy);
+  color: #f7f4ee;
+}
+
+#alerts { z-index: 7; }
+
 body.is-paused #scene { filter: saturate(0.72); }
 
 @media (max-width: 800px) {
-  #topbar { padding-right: 10px; padding-left: 10px; }
+  #topbar {
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-left: max(10px, env(safe-area-inset-left));
+  }
   .mark { font-size: 1.25rem; }
   #actions button { padding: 8px 10px; }
   .panel {
-    left: 10px;
-    right: 10px;
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
     width: auto;
   }
   #chat.panel {
@@ -659,8 +691,11 @@ body.is-paused #scene { filter: saturate(0.72); }
     max-width: 168px;
     font-size: 12px;
   }
-  #feed { left: 10px; width: calc(100% - 20px); }
-  #digest { top: 128px; max-height: min(62vh, 560px); }
+  #feed {
+    left: max(10px, env(safe-area-inset-left));
+    width: calc(100% - max(10px, env(safe-area-inset-left)) - max(10px, env(safe-area-inset-right)));
+  }
+  #digest { top: max(128px, calc(env(safe-area-inset-top) + 116px)); max-height: min(62vh, 560px); }
   #banner span { display: none; }
 }
 

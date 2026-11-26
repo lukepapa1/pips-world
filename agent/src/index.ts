@@ -4,6 +4,7 @@ import { authRequired } from "./auth.js";
 import { startChatWatch, stopChatWatch } from "./chat.js";
 import { closeDatabase, databasePath, openDatabase } from "./db.js";
 import { demoMode, ensureDataDirs, loadEnv, memoryDir, publishedDir, repoRoot, worldDistDir } from "./env.js";
+import { noteNewProjects, startQuietWatch, stopQuietWatch } from "./alerts.js";
 import { stopAcceptingTicks, waitForTickToFinish } from "./loop.js";
 import { startScheduler, stopScheduler } from "./schedule.js";
 import { startServer } from "./server.js";
@@ -35,6 +36,8 @@ if (demoMode()) startSimulator();
 else startScheduler();
 startSeasonClock();
 startChatWatch();
+void noteNewProjects();
+startQuietWatch();
 const server = startServer();
 
 let shuttingDown = false;
@@ -48,6 +51,7 @@ async function shutdown(signal: string): Promise<void> {
   stopSimulator();
   stopChatWatch();
   stopSeasonClock();
+  stopQuietWatch();
   await waitForTickToFinish();
   await new Promise<void>((resolve) => {
     server.close(() => resolve());

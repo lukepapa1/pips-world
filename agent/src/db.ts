@@ -121,6 +121,14 @@ function migrate(): void {
       created_at TEXT NOT NULL,
       read_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id TEXT PRIMARY KEY,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
   db.prepare(
     `INSERT INTO settings (key, value) VALUES ('paused', '0')
@@ -484,6 +492,64 @@ export function getSetting(key: string): string | null {
   return row?.value ?? null;
 }
 
+export type PushKind = "digest" | "request" | "project" | "quiet";
+
+export type PushPrefs = Record<PushKind, boolean>;
+
+const PUSH_KINDS: PushKind[] = ["digest", "request", "project", "quiet"];
+
+export function pushPrefs(): PushPrefs {
+  const prefs: PushPrefs = { digest: true, request: true, project: true, quiet: true };
+  const raw = getSetting("push_prefs");
+  if (!raw) return prefs;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PushPrefs>;
+    for (const kind of PUSH_KINDS) {
+      if (typeof parsed[kind] === "boolean") prefs[kind] = parsed[kind];
+    }
+  } catch {
+    return prefs;
+  }
+  return prefs;
+}
+
+export function pushEnabled(kind: PushKind): boolean {
+  return pushPrefs()[kind];
+}
+
+export function savePushPrefs(patch: Partial<PushPrefs>): PushPrefs {
+  const prefs = pushPrefs();
+  for (const kind of PUSH_KINDS) {
+    if (typeof patch[kind] === "boolean") prefs[kind] = patch[kind];
+  }
+  setSetting("push_prefs", JSON.stringify(prefs));
+  return prefs;
+}
+
+export type PushSubscriptionRow = {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+};
+
+export function listPushSubscriptions(): PushSubscriptionRow[] {
+  return db
+    .prepare(`SELECT endpoint, p256dh, auth FROM push_subscriptions ORDER BY created_at`)
+    .all() as PushSubscriptionRow[];
+}
+
+export function savePushSubscription(row: PushSubscriptionRow): void {
+  db.prepare(
+    `INSERT INTO push_subscriptions (id, endpoint, p256dh, auth, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth`,
+  ).run(randomUUID(), row.endpoint, row.p256dh, row.auth, new Date().toISOString());
+}
+
+export function deletePushSubscription(endpoint: string): void {
+  db.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ?`).run(endpoint);
+}
+
 export function setSetting(key: string, value: string): void {
   db.prepare(
     `INSERT INTO settings (key, value) VALUES (?, ?)
@@ -574,6 +640,19 @@ export function saveEvents(events: WorldEvent[]): void {
     for (const event of events) persist(event);
   });
   tx();
+  for (const event of events) {
+    if (event.kind !== "request") continue;
+    const title = event.payload.title;
+    queueMicrotask(() => {
+      void import("./notify.js").then(({ digestLink, notifyOwner }) =>
+        notifyOwner("request", {
+          title: "New request in the mailbox",
+          body: title,
+          url: digestLink(),
+        }),
+      );
+    });
+  }
 }
 
 export function decideRequest(

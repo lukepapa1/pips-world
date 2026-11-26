@@ -21,4 +21,9 @@ subscribe((state) => {
 
 ui.sync(getState());
 scene.sync(getState());
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {
+    // The village still opens if the app shell cannot be cached.
+  });
+}
 connect();

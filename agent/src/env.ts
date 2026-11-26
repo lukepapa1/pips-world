@@ -62,7 +62,7 @@ export function ensureDataDirs(): void {
   fs.mkdirSync(publishedDir(), { recursive: true });
 }
 
-const SECRET_ENV = ["LLM_API_KEY", "SEARCH_API_KEY", "OWNER_PASSWORD", "NTFY_TOPIC"];
+const SECRET_ENV = ["LLM_API_KEY", "SEARCH_API_KEY", "OWNER_PASSWORD", "NTFY_TOPIC", "VAPID_PRIVATE_KEY"];
 
 export function redactSecrets(text: string): string {
   let out = text;

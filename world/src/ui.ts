@@ -10,6 +10,7 @@ import {
   type SeasonPreview,
 } from "@pips/shared";
 import { eventClass, eventHour, eventLabel, eventText } from "./describe";
+import { mountAlerts } from "./alerts";
 import {
   getState,
   markDigestReadLocal,
@@ -239,6 +240,7 @@ export function createUI(
   const openChatButton = must<HTMLButtonElement>("open-chat");
   const openDiaryButton = must<HTMLButtonElement>("open-diary");
   const openMailboxButton = must<HTMLButtonElement>("open-mailbox");
+  const openAlertsButton = must<HTMLButtonElement>("open-alerts");
   const seasonIcon = must<HTMLElement>("season-icon");
   const seasonLabel = must<HTMLElement>("season-label");
   const seasonSwitch = must<HTMLElement>("season-switch");
@@ -316,14 +318,17 @@ export function createUI(
     }
   }
 
+  const alerts = mountAlerts(showToast);
+
   function refreshScrim(): void {
-    scrim.hidden = diary.hidden && mailbox.hidden && chat.hidden && digest.hidden;
+    scrim.hidden = diary.hidden && mailbox.hidden && chat.hidden && digest.hidden && alerts.isOpen() === false;
   }
 
   function closePanels(): void {
     diary.hidden = true;
     mailbox.hidden = true;
     chat.hidden = true;
+    alerts.close();
     hideDigest();
     refreshScrim();
     showChatFace();
@@ -394,6 +399,7 @@ export function createUI(
     diary.hidden = true;
     mailbox.hidden = true;
     chat.hidden = true;
+    alerts.close();
     refreshScrim();
     showChatFace();
     revealed.add(target.id);
@@ -401,6 +407,7 @@ export function createUI(
   }
 
   function considerDigest(state: ClientState): void {
+    if (alerts.isOpen()) return;
     if (!state.connected || state.digests.length === 0) return;
     const sorted = sortedDigests(state);
     const unread = sorted.find((entry) => !entry.readAt);
@@ -489,6 +496,7 @@ export function createUI(
     openDiary() {
       mailbox.hidden = true;
       chat.hidden = true;
+      alerts.close();
       hideDigest();
       diary.hidden = false;
       refreshScrim();
@@ -499,6 +507,7 @@ export function createUI(
     openMailbox() {
       diary.hidden = true;
       chat.hidden = true;
+      alerts.close();
       hideDigest();
       mailbox.hidden = false;
       refreshScrim();
@@ -509,6 +518,7 @@ export function createUI(
     openChat() {
       diary.hidden = true;
       mailbox.hidden = true;
+      alerts.close();
       hideDigest();
       chat.hidden = false;
       refreshScrim();
@@ -548,6 +558,19 @@ export function createUI(
   openChatButton.addEventListener("click", () => ui.openChat());
   openDiaryButton.addEventListener("click", () => ui.openDiary());
   openMailboxButton.addEventListener("click", () => ui.openMailbox());
+  openAlertsButton.addEventListener("click", () => {
+    if (alerts.isOpen()) {
+      alerts.close();
+      refreshScrim();
+      return;
+    }
+    diary.hidden = true;
+    mailbox.hidden = true;
+    chat.hidden = true;
+    hideDigest();
+    alerts.open();
+    refreshScrim();
+  });
   seasonSwitch.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLButtonElement)) return;
@@ -579,7 +602,8 @@ export function createUI(
       target.dataset.close === "diary" ||
       target.dataset.close === "mailbox" ||
       target.dataset.close === "chat" ||
-      target.dataset.close === "digest"
+      target.dataset.close === "digest" ||
+      target.dataset.close === "alerts"
     ) {
       closePanels();
     }
