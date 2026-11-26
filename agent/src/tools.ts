@@ -6,6 +6,7 @@ import type { LookImage, ToolSpec } from "./llm.js";
 import { readMemory, writeMemory } from "./memory.js";
 import { noteRead, noteSearch, readCap, readsLeft, searchCap, searchesLeft, webCallsPerTick } from "./usage.js";
 import { domainOf, formatSearch, openableUrl, readPage, viewImage, webContent, webSearch } from "./web.js";
+import { runBuild } from "./build.js";
 
 const TEXT_MAX = 4000;
 const FILE_MAX = 12_000;
@@ -96,6 +97,29 @@ export const PIP_TOOLS: ToolSpec[] = [
     parameters: TEXT_SCHEMA,
     required: ["text"],
   },
+  {
+    name: "build",
+    description:
+      "Add, move, or remove something you placed in the village. Types: bench, garden_bed, shelf, lamp, tree, flower_patch, fence, path_tile. x and z are metres from the centre. rotation is radians. Pass id when moving or removing one of several. You cannot move or remove the houses or the trees that were already here.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["add", "move", "remove"], description: "What to do." },
+        type: {
+          type: "string",
+          enum: ["bench", "garden_bed", "shelf", "lamp", "tree", "flower_patch", "fence", "path_tile"],
+          description: "What kind of object.",
+        },
+        x: { type: "number", description: "Metres east of the centre." },
+        z: { type: "number", description: "Metres north of the centre." },
+        rotation: { type: "number", description: "Rotation in radians. Optional." },
+        style: { type: "string", description: "A short style note. Optional." },
+        id: { type: "string", description: "Id of an object you placed, for move or remove." },
+      },
+      required: ["action", "type", "x", "z"],
+    },
+    required: ["action", "type", "x", "z"],
+  },
 ];
 
 export const DIARY_TOOL = PIP_TOOLS.filter((tool) => tool.name === "write_diary");
@@ -149,6 +173,8 @@ export async function executeTool(
       return updateFile("identity.md", args);
     case "update_interests":
       return updateFile("interests.md", args);
+    case "build":
+      return runBuild(args, tick);
     default:
       return { result: "Unknown tool.", kind: null };
   }

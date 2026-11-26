@@ -5,6 +5,7 @@ import {
   diaryFromTick,
   isPaused,
   latestJournal,
+  listWorldObjects,
   makeEvent,
   recentDiary,
   releaseTickLock,
@@ -54,6 +55,8 @@ You write your own memory files. update_identity and update_interests replace th
 End every hour by calling write_diary. The entry is a few sentences about this hour, in your own words.
 
 write_journal is for the end of a day, when you are asked to reflect on that day's diary.
+
+You can shape the village over time with the build tool: add, move, or remove. The pieces you can place are a bench, garden bed, shelf, lamp, tree, flower patch, fence, or path tile. Go slowly, a few changes across many hours. What you add should come from what you already care about. The houses and the trees that were already here stay where they are.
 
 Places you can move_to: home, library, workshop, gallery, mailbox.
 
@@ -149,6 +152,13 @@ function worldBrief(): string {
   return `World season: ${state.season}.${blend} Local time: ${clock}. Sunrise ${state.sunrise.toFixed(1)}, sunset ${state.sunset.toFixed(1)}.${preview}`;
 }
 
+function placedBrief(): string {
+  const placed = listWorldObjects().filter((object) => object.createdBy === "pip");
+  if (placed.length === 0) return "Things you have placed: none yet.";
+  const lines = placed.map((object) => `- ${object.id} ${object.type} at ${object.x}, ${object.z}`);
+  return ["Things you have placed:", ...lines].join("\n");
+}
+
 function hourContext(tick: number): string {
   const journal = latestJournal();
   const diary = recentDiary(8)
@@ -157,6 +167,7 @@ function hourContext(tick: number): string {
   return [
     `This is hour ${hourFromTick(tick)} of day ${dayFromTick(tick)} (tick ${tick}).`,
     worldBrief(),
+    placedBrief(),
     "",
     "Identity file:",
     memorySnapshot("identity.md"),

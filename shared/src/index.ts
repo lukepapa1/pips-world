@@ -1,3 +1,21 @@
+import type { BuildAction, BuildableType, WorldObject } from "./objects.js";
+
+export type { BuildAction, BuildableType, PlaceType, WorldObject } from "./objects.js";
+export {
+  BUILDABLE,
+  BUILDING_SLOTS,
+  VILLAGE_RADIUS,
+  WORLD_RADIUS,
+  buildingAngle,
+  footprintOf,
+  insideWorld,
+  isBuildable,
+  isPlaceType,
+  isWorldObject,
+  overlaps,
+  starterObjects,
+} from "./objects.js";
+
 export const BUILDINGS = ["home", "library", "workshop", "gallery", "mailbox"] as const;
 
 export type BuildingId = (typeof BUILDINGS)[number];
@@ -139,6 +157,18 @@ export type WorldEvent =
   | (EventBase & {
       kind: "browse";
       payload: { tool: BrowseTool; url: string; query: string | null };
+    })
+  | (EventBase & {
+      kind: "build";
+      payload: {
+        action: BuildAction;
+        objectId: string;
+        type: BuildableType;
+        x: number;
+        z: number;
+        rotation: number;
+        style: string;
+      };
     });
 
 export type BrowseTool = "web_search" | "read_page" | "view_image";
@@ -206,6 +236,7 @@ export type SnapshotMessage = {
   tick: number;
   day: number;
   world: WorldState;
+  objects: WorldObject[];
 };
 
 export type ServerMessage =
@@ -216,6 +247,7 @@ export type ServerMessage =
   | { type: "digest"; digest: DigestRow }
   | { type: "digest_read"; id: string; readAt: string }
   | { type: "browsing"; domain: string | null }
+  | { type: "world_objects"; objects: WorldObject[] }
   | { type: "error"; message: string };
 
 export type ClientMessage =
@@ -236,6 +268,7 @@ const EVENT_KINDS = new Set([
   "season_change",
   "chat",
   "browse",
+  "build",
 ]);
 
 export function isWorldEvent(value: unknown): value is WorldEvent {

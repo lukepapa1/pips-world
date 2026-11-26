@@ -18,7 +18,7 @@ const DIGEST_PROMPT = `You write a short daily digest of Pip's day. Reply with o
 
 The object has:
 - headline: one short sentence
-- built: world changes, such as where he went or how the season shifted
+- built: things he added, moved, or removed in the village, and also where he went or how the season shifted. Put each build note in built
 - learnt: things he read or figured out
 - made: projects or things he made
 - wants: requests that are still open
@@ -73,6 +73,12 @@ function eventLine(event: WorldEvent): string | null {
       return `Request “${event.payload.title}” was ${event.payload.decision}.`;
     case "season_change":
       return `The season became ${event.payload.to}.`;
+    case "build": {
+      const name = event.payload.type.replaceAll("_", " ");
+      if (event.payload.action === "add") return `Built: added a ${name}.`;
+      if (event.payload.action === "move") return `Built: moved a ${name}.`;
+      return `Built: removed a ${name}.`;
+    }
     default:
       return null;
   }

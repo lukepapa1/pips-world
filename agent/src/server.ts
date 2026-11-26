@@ -23,6 +23,7 @@ import {
   listEvents,
   listJournal,
   listRequests,
+  listWorldObjects,
   markAllDiaryRead,
   markDigestRead,
   maxTick,
@@ -51,6 +52,7 @@ function snapshot(): SnapshotMessage {
     tick,
     day: dayFromTick(tick),
     world: currentWorldState(),
+    objects: listWorldObjects(),
   };
 }
 

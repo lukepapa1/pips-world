@@ -1,9 +1,4 @@
-import {
-  isSeason,
-  type Season,
-  type SeasonPreview,
-  type WorldState,
-} from "@pips/shared";
+import { type Season, type SeasonPreview, type WorldState } from "@pips/shared";
 import {
   getSetting,
   lastRecordedSeason,
@@ -115,9 +110,7 @@ export function calendarSeason(now = new Date()): Calendar {
 }
 
 function previewSetting(): SeasonPreview {
-  const saved = getSetting("season_preview");
-  if (saved === "auto" || saved === null) return "auto";
-  return isSeason(saved) ? saved : "auto";
+  return "auto";
 }
 
 function daylight(season: Season, next: Season, blend: number) {
@@ -156,8 +149,8 @@ export function currentWorldState(now = new Date()): WorldState {
   };
 }
 
-export function setSeasonPreview(season: SeasonPreview): void {
-  setSetting("season_preview", season);
+export function setSeasonPreview(_season: SeasonPreview): void {
+  setSetting("season_preview", "auto");
   publishWorldState(true);
 }
 
@@ -193,6 +186,7 @@ function publishWorldState(force = false): void {
 }
 
 export function startSeasonClock(): void {
+  if (getSetting("season_preview") !== "auto") setSetting("season_preview", "auto");
   publishWorldState(true);
   timer = setInterval(() => publishWorldState(false), 10_000);
   console.log(

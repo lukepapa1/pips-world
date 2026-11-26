@@ -1,6 +1,7 @@
 import {
   isDigestRow,
   isWorldEvent,
+  isWorldObject,
   isWorldState,
   type ClientMessage,
   type DigestRow,
@@ -14,6 +15,7 @@ import {
   markDiaryRead,
   setBrowsing,
   setConnected,
+  setWorldObjects,
   setWorldState,
   upsertDigest,
 } from "./state";
@@ -22,6 +24,7 @@ let active: WebSocket | null = null;
 let haveSnapshot = false;
 let queue: WorldEvent[] = [];
 let digestQueue: DigestRow[] = [];
+let objectQueue: ServerMessage | null = null;
 let reconnectTimer = 0;
 
 export function send(message: ClientMessage): boolean {
@@ -41,6 +44,7 @@ export function connect(): void {
   haveSnapshot = false;
   queue = [];
   digestQueue = [];
+  objectQueue = null;
   setConnected(false);
 
   socket.addEventListener("open", () => {
@@ -64,6 +68,14 @@ export function connect(): void {
       const pendingDigests = digestQueue;
       digestQueue = [];
       for (const digest of pendingDigests) upsertDigest(digest);
+      if (objectQueue?.type === "world_objects") setWorldObjects(objectQueue.objects.filter(isWorldObject));
+      objectQueue = null;
+      return;
+    }
+    if (message.type === "world_objects") {
+      const objects = message.objects.filter(isWorldObject);
+      if (!haveSnapshot) objectQueue = { type: "world_objects", objects };
+      else setWorldObjects(objects);
       return;
     }
     if (message.type === "digest") {

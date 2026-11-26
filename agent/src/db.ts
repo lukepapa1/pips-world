@@ -16,7 +16,10 @@ import {
   type RequestRow,
   type Season,
   type WorldEvent,
+  type WorldObject,
   isDigestRow,
+  isPlaceType,
+  starterObjects,
 } from "@pips/shared";
 import { sqliteFile } from "./env.js";
 
@@ -55,7 +58,7 @@ function migrate(): void {
     CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL CHECK (kind IN (
-        'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse'
+        'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build'
       )),
       tick INTEGER NOT NULL,
       day INTEGER NOT NULL,
@@ -129,25 +132,37 @@ function migrate(): void {
       auth TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS world_objects (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      x REAL NOT NULL,
+      z REAL NOT NULL,
+      rotation REAL NOT NULL,
+      style TEXT NOT NULL,
+      created_by TEXT NOT NULL CHECK (created_by IN ('world', 'pip')),
+      created_at TEXT NOT NULL
+    );
   `);
   db.prepare(
     `INSERT INTO settings (key, value) VALUES ('paused', '0')
      ON CONFLICT(key) DO NOTHING`,
   ).run();
   widenEventKinds();
+  seedWorld();
 }
 
 function widenEventKinds(): void {
   const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'`).get() as
     | { sql: string }
     | undefined;
-  if (!row || row.sql.includes("'browse'")) return;
+  if (!row || row.sql.includes("'build'")) return;
   const tx = db.transaction(() => {
     db.exec(`
       CREATE TABLE events_next (
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN (
-          'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse'
+          'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build'
         )),
         tick INTEGER NOT NULL,
         day INTEGER NOT NULL,
@@ -631,6 +646,7 @@ function persist(event: WorldEvent): void {
     case "season_change":
     case "chat":
     case "browse":
+    case "build":
       break;
   }
 }
@@ -838,6 +854,92 @@ export function consumeUnseenChatSummaries(): string {
   const mark = db.prepare(`UPDATE chat_summaries SET seen_at = ? WHERE id = ?`);
   for (const row of rows) mark.run(seenAt, row.id);
   return rows.map((row) => row.text).join("\n\n");
+}
+
+type ObjectSql = {
+  id: string;
+  type: string;
+  x: number;
+  z: number;
+  rotation: number;
+  style: string;
+  created_by: string;
+  created_at: string;
+};
+
+function mapObject(row: ObjectSql): WorldObject | null {
+  if (!isPlaceType(row.type)) return null;
+  if (row.created_by !== "world" && row.created_by !== "pip") return null;
+  return {
+    id: row.id,
+    type: row.type,
+    x: row.x,
+    z: row.z,
+    rotation: row.rotation,
+    style: row.style,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
+function seedWorld(): void {
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM world_objects`).get() as { n: number };
+  if (count.n > 0) return;
+  const insert = db.prepare(
+    `INSERT INTO world_objects (id, type, x, z, rotation, style, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const tx = db.transaction(() => {
+    for (const object of starterObjects()) {
+      insert.run(
+        object.id,
+        object.type,
+        object.x,
+        object.z,
+        object.rotation,
+        object.style,
+        object.createdBy,
+        object.createdAt,
+      );
+    }
+  });
+  tx();
+}
+
+export function listWorldObjects(): WorldObject[] {
+  const rows = db
+    .prepare(`SELECT id, type, x, z, rotation, style, created_by, created_at FROM world_objects ORDER BY created_at, id`)
+    .all() as ObjectSql[];
+  return rows.flatMap((row) => {
+    const object = mapObject(row);
+    return object ? [object] : [];
+  });
+}
+
+export function insertWorldObject(object: WorldObject): void {
+  db.prepare(
+    `INSERT INTO world_objects (id, type, x, z, rotation, style, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    object.id,
+    object.type,
+    object.x,
+    object.z,
+    object.rotation,
+    object.style,
+    object.createdBy,
+    object.createdAt,
+  );
+}
+
+export function updateWorldObject(object: WorldObject): void {
+  db.prepare(
+    `UPDATE world_objects SET x = ?, z = ?, rotation = ?, style = ? WHERE id = ?`,
+  ).run(object.x, object.z, object.rotation, object.style, object.id);
+}
+
+export function deleteWorldObject(id: string): void {
+  db.prepare(`DELETE FROM world_objects WHERE id = ?`).run(id);
 }
 
 export function markAllDiaryRead(): string | null {

@@ -27,6 +27,8 @@ export function eventLabel(event: WorldEvent): string {
       return "Chat";
     case "browse":
       return "Web";
+    case "build":
+      return "Built";
   }
 }
 
@@ -67,6 +69,12 @@ export function eventText(event: WorldEvent): string {
       }
       if (event.payload.tool === "view_image") return `Pip looked at an image at ${event.payload.url}.`;
       return `Pip read ${event.payload.url}.`;
+    case "build": {
+      const name = event.payload.type.replaceAll("_", " ");
+      if (event.payload.action === "add") return `Pip placed a ${name}.`;
+      if (event.payload.action === "move") return `Pip moved a ${name}.`;
+      return `Pip removed a ${name}.`;
+    }
   }
 }
 

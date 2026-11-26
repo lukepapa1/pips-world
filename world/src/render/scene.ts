@@ -255,9 +255,11 @@ export function mountScene(
       setBadge(village.mailboxBadge, pendingRequestCount(state));
       pip.setPaused(state.paused);
       village.setBrowsing(state.browsing !== null);
+      village.syncObjects(state.objects);
       if (state.world) atmosphere.setWorld(state.world);
       if (state.placement === "none" || !state.pipAt) return;
       const spot = village.stands[state.pipAt];
+      if (!spot) return;
       if (state.placement === "jump") pip.placeAt(spot.stand, spot.door);
       else pip.walkTo(spot.stand, spot.door);
     },

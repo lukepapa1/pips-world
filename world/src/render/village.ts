@@ -1,6 +1,18 @@
 import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { SEASONS, type BuildingId, type Season, BUILDING_NAMES } from "@pips/shared";
+import {
+  BUILDING_NAMES,
+  BUILDING_SLOTS,
+  SEASONS,
+  VILLAGE_RADIUS,
+  buildingAngle,
+  isBuildingId,
+  starterObjects,
+  type BuildingId,
+  type Season,
+  type WorldObject,
+} from "@pips/shared";
+import { makePiece } from "./pieces";
 import type { Quality } from "./quality";
 
 export type WorldAction = "diary" | "mailbox";
@@ -10,18 +22,12 @@ export type Stand = {
   door: THREE.Vector3;
 };
 
-const RADIUS = 7.15;
+const RADIUS = VILLAGE_RADIUS;
 
-const SLOT: Record<BuildingId, number> = {
-  home: 0,
-  mailbox: 1,
-  gallery: 2,
-  workshop: 3,
-  library: 4,
-};
+const SLOT = BUILDING_SLOTS;
 
 function slotAngle(slot: number): number {
-  return Math.PI / 2 - (slot * 2 * Math.PI) / 5;
+  return buildingAngle(slot);
 }
 
 function mat(
@@ -211,6 +217,7 @@ export type Village = {
   setBrowsing(on: boolean): void;
   setSeason(weights: Record<Season, number>): void;
   setQuality(quality: Quality): void;
+  syncObjects(objects: WorldObject[]): void;
 };
 
 export function createVillage(scene: THREE.Scene, quality: Quality): Village {
@@ -416,88 +423,10 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
   addLamp(gallery, -1.15, 1.25, 1.12);
   addLamp(mailbox, -0.85, 1.05, 0.95);
 
-  const treeRng = mulberry32(17);
-  const specs: { round: boolean; x: number; z: number; rot: number; scale: number; seed: number }[] = [];
-  for (let i = 0; i < 22; i += 1) {
-    const angle = (i / 22) * Math.PI * 2 + (treeRng() - 0.5) * 0.28;
-    const radius = 12.15 + treeRng() * 2.35;
-    specs.push({
-      round: treeRng() > 0.45,
-      x: Math.cos(angle) * radius,
-      z: Math.sin(angle) * radius,
-      rot: treeRng() * Math.PI * 2,
-      scale: 0.78 + treeRng() * 0.65,
-      seed: treeRng() * Math.PI * 2,
-    });
-  }
-  const roundCount = specs.filter((spec) => spec.round).length;
-  const coneCount = specs.length - roundCount;
-  const trunkGeo = new THREE.CylinderGeometry(0.07, 0.11, 0.72, 6);
-  trunkGeo.translate(0, 0.36, 0);
-  const canopyGeo = new THREE.IcosahedronGeometry(0.62, 0);
-  canopyGeo.scale(1, 0.82, 1);
-  canopyGeo.translate(0, 1.05, 0);
-  const sideGeo = new THREE.IcosahedronGeometry(0.38, 0);
-  sideGeo.translate(0.28, 0.82, 0.1);
-  const lowerGeo = new THREE.ConeGeometry(0.62, 0.95, 7);
-  lowerGeo.translate(0, 1.05, 0);
-  const upperGeo = new THREE.ConeGeometry(0.42, 0.75, 7);
-  upperGeo.translate(0, 1.62, 0);
-  const trunkMat = mat("#6d4c34", { roughness: 0.95 });
-  const leafMat = mat("#ffffff", { roughness: 0.95, flatShading: true });
-  const trunks = makeInstances(trunkGeo, trunkMat, specs.length, scene, true);
-  const canopies = makeInstances(canopyGeo, leafMat, Math.max(1, roundCount), scene, true, true);
-  const sides = makeInstances(sideGeo, leafMat, Math.max(1, roundCount), scene, true, true);
-  const lowers = makeInstances(lowerGeo, leafMat, Math.max(1, coneCount), scene, true, true);
-  const uppers = makeInstances(upperGeo, leafMat, Math.max(1, coneCount), scene, true, true);
-  const leafSlots: { mesh: THREE.InstancedMesh; index: number; slot: number }[] = [];
-  const swayParts = [trunks, canopies, sides, lowers, uppers];
-  const greens = ["#3f6d3c", "#4e8248", "#2f5a34"];
-  const leafColor = new THREE.Color();
-  const treePos = new THREE.Vector3();
-  const treeQuat = new THREE.Quaternion();
-  const treeScale = new THREE.Vector3();
-  const treeUp = new THREE.Vector3(0, 1, 0);
-  const treeBase = new THREE.Matrix4();
-
-  function pushTree(part: SwayMesh, seed: number): number {
-    const index = part.seeds.length;
-    part.bases.push(treeBase.clone());
-    part.seeds.push(seed);
-    part.mesh.setMatrixAt(index, treeBase);
-    return index;
-  }
-
-  for (const spec of specs) {
-    treePos.set(spec.x, 0, spec.z);
-    treeQuat.setFromAxisAngle(treeUp, spec.rot);
-    treeScale.setScalar(spec.scale);
-    treeBase.compose(treePos, treeQuat, treeScale);
-    pushTree(trunks, spec.seed);
-    const slot = Math.floor(treeRng() * greens.length);
-    leafColor.set(greens[slot] ?? "#3f6d3c");
-    if (spec.round) {
-      const index = pushTree(canopies, spec.seed);
-      canopies.mesh.setColorAt(index, leafColor);
-      leafSlots.push({ mesh: canopies.mesh, index, slot });
-      const sideIndex = pushTree(sides, spec.seed);
-      sides.mesh.setColorAt(sideIndex, leafColor);
-      leafSlots.push({ mesh: sides.mesh, index: sideIndex, slot });
-    } else {
-      const index = pushTree(lowers, spec.seed);
-      lowers.mesh.setColorAt(index, leafColor);
-      leafSlots.push({ mesh: lowers.mesh, index, slot });
-      const topIndex = pushTree(uppers, spec.seed);
-      uppers.mesh.setColorAt(topIndex, leafColor);
-      leafSlots.push({ mesh: uppers.mesh, index: topIndex, slot });
-    }
-  }
-  for (const part of swayParts) {
-    part.mesh.count = part.seeds.length;
-    part.mesh.instanceMatrix.needsUpdate = true;
-    if (part.mesh.instanceColor) part.mesh.instanceColor.needsUpdate = true;
-    part.mesh.computeBoundingSphere();
-  }
+  const buildings: Record<BuildingId, THREE.Group> = { home, library, workshop, gallery, mailbox };
+  const dynamic = new Map<string, THREE.Group>();
+  const glows: THREE.Mesh[] = [];
+  let liveLeaves: { material: THREE.MeshStandardMaterial; slot: number; mesh: THREE.Mesh }[] = [];
 
   const scatterRng = mulberry32(29);
   const petalHex = ["#e07a5f", "#f2cc8f", "#f7f3ea", "#e7a0bf", "#f0a36b"];
@@ -602,10 +531,127 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
   rocks.mesh.computeBoundingSphere();
 
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const sway = new THREE.Matrix4();
-  const lean = new THREE.Matrix4();
-  const swayed = new THREE.Matrix4();
-  const shrink = new THREE.Matrix4();
+  const RECENT_MS = 6 * 60 * 60 * 1000;
+
+  function disposeGroup(group: THREE.Group): void {
+    const ring = group.getObjectByName("recent-glow");
+    if (ring instanceof THREE.Mesh) {
+      const index = glows.indexOf(ring);
+      if (index >= 0) glows.splice(index, 1);
+    }
+    group.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.geometry.dispose();
+      const material = child.material;
+      if (Array.isArray(material)) material.forEach((item) => item.dispose());
+      else material.dispose();
+    });
+  }
+
+  function rememberLeaves(): void {
+    const next: typeof liveLeaves = [];
+    for (const group of dynamic.values()) {
+      const leaves = group.userData.leaves;
+      if (!Array.isArray(leaves)) continue;
+      for (const leaf of leaves) {
+        if (!(leaf instanceof THREE.Mesh)) continue;
+        const material = leaf.material;
+        if (!(material instanceof THREE.MeshStandardMaterial)) continue;
+        const slot = leaf.userData.leafSlot;
+        if (!(leaf.userData.baseScale instanceof THREE.Vector3)) {
+          leaf.userData.baseScale = leaf.scale.clone();
+        }
+        next.push({ material, slot: typeof slot === "number" ? slot : 0, mesh: leaf });
+      }
+    }
+    liveLeaves = next;
+  }
+
+  function touchGlow(group: THREE.Group, createdAt: string): void {
+    const recent = Number.isFinite(Date.parse(createdAt)) && Date.now() - Date.parse(createdAt) < RECENT_MS;
+    const existing = group.getObjectByName("recent-glow");
+    if (!recent) {
+      if (existing instanceof THREE.Mesh) {
+        group.remove(existing);
+        const index = glows.indexOf(existing);
+        if (index >= 0) glows.splice(index, 1);
+        existing.geometry.dispose();
+        const material = existing.material;
+        if (!Array.isArray(material)) material.dispose();
+      }
+      return;
+    }
+    if (existing) return;
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.45, 0.68, 28),
+      new THREE.MeshBasicMaterial({
+        color: "#ffe08a",
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    ring.name = "recent-glow";
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.05;
+    ring.renderOrder = 2;
+    group.add(ring);
+    glows.push(ring);
+  }
+
+  function standFor(x: number, z: number): Stand {
+    const angle = Math.atan2(z, x);
+    const radius = Math.max(1.2, Math.hypot(x, z) - 2.55);
+    return {
+      stand: new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius),
+      door: new THREE.Vector3(x, 0.7, z),
+    };
+  }
+
+  function syncObjects(objects: WorldObject[]): void {
+    if (objects.length === 0) return;
+    const seen = new Set<string>();
+    const shownBuildings = new Set<BuildingId>();
+    for (const object of objects) {
+      if (isBuildingId(object.type)) {
+        const group = buildings[object.type];
+        group.visible = true;
+        group.position.set(object.x, 0, object.z);
+        group.rotation.y = object.rotation;
+        stands[object.type] = standFor(object.x, object.z);
+        shownBuildings.add(object.type);
+        continue;
+      }
+      seen.add(object.id);
+      let group = dynamic.get(object.id);
+      if (group && group.userData.style !== object.style) {
+        scene.remove(group);
+        disposeGroup(group);
+        dynamic.delete(object.id);
+        group = undefined;
+      }
+      if (!group) {
+        group = makePiece(object.type, object.style);
+        scene.add(group);
+        dynamic.set(object.id, group);
+      }
+      group.position.set(object.x, 0, object.z);
+      group.userData.yaw = object.rotation;
+      group.rotation.y = object.rotation;
+      touchGlow(group, object.createdAt);
+    }
+    for (const id of Object.keys(buildings) as BuildingId[]) {
+      if (!shownBuildings.has(id)) buildings[id].visible = false;
+    }
+    for (const [id, group] of dynamic) {
+      if (seen.has(id)) continue;
+      scene.remove(group);
+      disposeGroup(group);
+      dynamic.delete(id);
+    }
+    rememberLeaves();
+  }
   const placedFlowers = flowerCursor;
   const placedRocks = rockCursor;
   const leafPalettes: Record<Season, THREE.Color[]> = {
@@ -644,8 +690,12 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
       petalMat.color.g += petal.g * weight;
       petalMat.color.b += petal.b * weight;
     }
-    const touched = new Set<THREE.InstancedMesh>();
-    for (const leaf of leafSlots) {
+    foliageScale =
+      (weights.spring ?? 0) * 1 +
+      (weights.summer ?? 0) * 1.04 +
+      (weights.autumn ?? 0) * 0.94 +
+      (weights.winter ?? 0) * 0.18;
+    for (const leaf of liveLeaves) {
       mixedLeaf.setRGB(0, 0, 0);
       for (const season of SEASONS) {
         const weight = weights[season] ?? 0;
@@ -655,17 +705,10 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
         mixedLeaf.g += color.g * weight;
         mixedLeaf.b += color.b * weight;
       }
-      leaf.mesh.setColorAt(leaf.index, mixedLeaf);
-      touched.add(leaf.mesh);
+      leaf.material.color.copy(mixedLeaf);
+      const base = leaf.mesh.userData.baseScale;
+      if (base instanceof THREE.Vector3) leaf.mesh.scale.copy(base).multiplyScalar(foliageScale);
     }
-    for (const mesh of touched) {
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    }
-    foliageScale =
-      (weights.spring ?? 0) * 1 +
-      (weights.summer ?? 0) * 1.04 +
-      (weights.autumn ?? 0) * 0.94 +
-      (weights.winter ?? 0) * 0.18;
   }
 
   let browsing = false;
@@ -677,6 +720,13 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     glassCool.emissive.copy(coolDay).lerp(warmGlow, glow);
     glassCool.emissiveIntensity = THREE.MathUtils.lerp(0.08, 1.6, glow);
     lampMat.emissiveIntensity = glow * 2.6;
+    for (const group of dynamic.values()) {
+      group.traverse((child) => {
+        if (child.name !== "bulb" || !(child instanceof THREE.Mesh)) return;
+        const material = child.material;
+        if (material instanceof THREE.MeshStandardMaterial) material.emissiveIntensity = 0.2 + glow * 2.2;
+      });
+    }
     if (browsing) {
       libraryGlass.emissive.set("#ffe3a8");
       libraryGlass.emissiveIntensity = 3.2;
@@ -702,6 +752,7 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
   }
 
   setQuality(quality);
+  syncObjects(starterObjects());
 
   return {
     stands,
@@ -723,26 +774,22 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
         }
       });
       const motion = reduceMotion ? 0 : 1;
-      for (const part of swayParts) {
-        if (part.seeds.length === 0) continue;
-        for (let i = 0; i < part.seeds.length; i += 1) {
-          const seed = part.seeds[i] ?? 0;
-          const base = part.bases[i];
-          if (!base) continue;
-          const tilt =
-            (Math.sin(time * 1.15 + seed) * 0.035 + Math.sin(time * 0.37 + seed * 2) * 0.012) * motion;
-          lean.makeRotationX(Math.cos(time * 0.85 + seed) * 0.018 * motion);
-          sway.makeRotationZ(tilt).multiply(lean);
-          swayed.multiplyMatrices(base, sway);
-          if (part.foliage && Math.abs(foliageScale - 1) > 0.001) {
-            shrink.makeScale(foliageScale, foliageScale, foliageScale);
-            swayed.multiply(shrink);
-          }
-          part.mesh.setMatrixAt(i, swayed);
+      for (const group of dynamic.values()) {
+        const seed = group.userData.seed;
+        const yaw = group.userData.yaw;
+        if (typeof seed !== "number" || typeof yaw !== "number") continue;
+        const tilt = (Math.sin(time * 1.15 + seed) * 0.02 + Math.sin(time * 0.37 + seed) * 0.008) * motion;
+        group.rotation.y = yaw;
+        group.rotation.z = tilt;
+      }
+      for (const ring of glows) {
+        const material = ring.material;
+        if (material instanceof THREE.MeshBasicMaterial) {
+          material.opacity = 0.4 + Math.sin(time * 2.4) * 0.28;
         }
-        part.mesh.instanceMatrix.needsUpdate = true;
       }
     },
+    syncObjects,
   };
 }
 

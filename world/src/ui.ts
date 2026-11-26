@@ -7,7 +7,6 @@ import {
   type DigestSections,
   type RequestRow,
   type Season,
-  type SeasonPreview,
 } from "@pips/shared";
 import { eventClass, eventHour, eventLabel, eventText } from "./describe";
 import { mountAlerts } from "./alerts";
@@ -243,7 +242,6 @@ export function createUI(
   const openAlertsButton = must<HTMLButtonElement>("open-alerts");
   const seasonIcon = must<HTMLElement>("season-icon");
   const seasonLabel = must<HTMLElement>("season-label");
-  const seasonSwitch = must<HTMLElement>("season-switch");
 
   let sawConnection = false;
   let toastTimer = 0;
@@ -461,12 +459,6 @@ export function createUI(
         seasonIcon.textContent = "";
         seasonLabel.textContent = "Season";
       }
-      const preview = state.world?.preview ?? "auto";
-      for (const button of seasonSwitch.querySelectorAll("button[data-season]")) {
-        if (!(button instanceof HTMLButtonElement)) continue;
-        button.setAttribute("aria-pressed", String(button.dataset.season === preview));
-        button.disabled = !state.connected;
-      }
       const lastEvent = state.events[state.events.length - 1];
       const nextFeed = `${state.events.length}:${lastEvent?.id ?? ""}`;
       if (nextFeed !== feedSig) {
@@ -570,14 +562,6 @@ export function createUI(
     hideDigest();
     alerts.open();
     refreshScrim();
-  });
-  seasonSwitch.addEventListener("click", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLButtonElement)) return;
-    const season = target.dataset.season;
-    if (season !== "auto" && !isSeason(season)) return;
-    const preview: SeasonPreview = season;
-    if (!send({ type: "set_season_preview", season: preview })) showToast("Not connected.");
   });
   pause.addEventListener("click", () => {
     const next = !getState().paused;

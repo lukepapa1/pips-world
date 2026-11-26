@@ -1,6 +1,7 @@
 import {
   isBuildingId,
   isWorldEvent,
+  isWorldObject,
   isWorldState,
   type BuildingId,
   type DiaryRow,
@@ -9,6 +10,7 @@ import {
   type RequestRow,
   type SnapshotMessage,
   type WorldEvent,
+  type WorldObject,
   type WorldState,
 } from "@pips/shared";
 
@@ -28,6 +30,7 @@ export type ClientState = {
   placement: Placement;
   world: WorldState | null;
   browsing: string | null;
+  objects: WorldObject[];
 };
 
 const listeners = new Set<(state: ClientState) => void>();
@@ -46,6 +49,7 @@ let state: ClientState = {
   placement: "none",
   world: null,
   browsing: null,
+  objects: [],
 };
 
 export function getState(): ClientState {
@@ -90,7 +94,12 @@ export function loadSnapshot(message: SnapshotMessage): void {
     placement: "jump",
     world: isWorldState(message.world) ? message.world : state.world,
     browsing: null,
+    objects: Array.isArray(message.objects) ? message.objects.filter(isWorldObject) : state.objects,
   });
+}
+
+export function setWorldObjects(objects: WorldObject[]): void {
+  commit({ ...state, objects: objects.filter(isWorldObject), placement: "none" });
 }
 
 export function applyEvent(event: WorldEvent): void {
@@ -161,6 +170,7 @@ export function applyEvent(event: WorldEvent): void {
     case "season_change":
     case "chat":
     case "browse":
+    case "build":
       break;
   }
 

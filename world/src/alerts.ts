@@ -13,6 +13,23 @@ function emptyPrefs(): PushPrefs {
   return { digest: true, request: true, project: true, quiet: true };
 }
 
+function embeddedBrowser(): boolean {
+  return /\bElectron\b/.test(navigator.userAgent);
+}
+
+function subscribeFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (/push service not available/i.test(message) || embeddedBrowser()) {
+    return "This browser has no notification service. Open the village in Chrome or Safari.";
+  }
+  if (error instanceof DOMException && error.name === "NotAllowedError") return "Notifications stayed off.";
+  if (error instanceof DOMException && error.name === "InvalidAccessError") {
+    return "The server's notification key was rejected.";
+  }
+  if (message === "Failed to fetch") return "Could not reach the server.";
+  return "Could not turn on notifications.";
+}
+
 function urlBase64ToBytes(value: string): Uint8Array<ArrayBuffer> {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
   const raw = atob(padded);
@@ -84,9 +101,11 @@ export function mountAlerts(showToast: (text: string) => void): {
     const pushHere = "Notification" in window && "serviceWorker" in navigator && "PushManager" in window;
     const registration = pushHere ? await navigator.serviceWorker.getRegistration() : null;
     const existing = registration ? await registration.pushManager.getSubscription() : null;
-    enableButton.hidden = !pushHere || !state.publicKey || Boolean(existing);
-    testButton.disabled = !pushHere || !state.publicKey || !existing;
+    const here = embeddedBrowser();
+    enableButton.hidden = !pushHere || !state.publicKey || Boolean(existing) || here;
+    testButton.disabled = !pushHere || !state.publicKey || !existing || here;
     if (!state.publicKey) status.textContent = "Web push is not configured on the server.";
+    else if (here) status.textContent = "This browser has no notification service. Open the village in Chrome or Safari.";
     else if (!pushHere) status.textContent = "This browser cannot show web alerts until Pip is installed.";
     else if (Notification.permission === "denied") status.textContent = "Notifications are blocked for this site.";
     else if (!existing) status.textContent = "Turn on notifications to receive alerts on this device.";
@@ -106,11 +125,12 @@ export function mountAlerts(showToast: (text: string) => void): {
     }
     const registration = await navigator.serviceWorker.ready;
     const existing = await registration.pushManager.getSubscription();
+    const applicationServerKey = urlBase64ToBytes(state.publicKey).buffer;
     const subscription =
       existing ??
       (await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToBytes(state.publicKey),
+        applicationServerKey,
       }));
     const response = await fetch("/api/push/subscribe", {
       method: "POST",
@@ -149,7 +169,11 @@ export function mountAlerts(showToast: (text: string) => void): {
   });
 
   enableButton.addEventListener("click", () => {
-    subscribe().catch(() => showToast("Could not turn on notifications."));
+    subscribe().catch((error: unknown) => {
+      const text = subscribeFailure(error);
+      status.textContent = text;
+      showToast(text);
+    });
   });
 
   testButton.addEventListener("click", () => {

@@ -8,6 +8,7 @@ type Usage = {
   chats: number;
   searches: number;
   reads: number;
+  builds: number;
 };
 
 export type Caps = {
@@ -53,7 +54,16 @@ export function caps(): Caps {
 
 function loadUsage(): Usage {
   const today = localDate();
-  const empty: Usage = { date: today, ticks: 0, calls: 0, tokens: 0, chats: 0, searches: 0, reads: 0 };
+  const empty: Usage = {
+    date: today,
+    ticks: 0,
+    calls: 0,
+    tokens: 0,
+    chats: 0,
+    searches: 0,
+    reads: 0,
+    builds: 0,
+  };
   const raw = getSetting(USAGE_KEY);
   if (!raw) return empty;
   try {
@@ -67,6 +77,7 @@ function loadUsage(): Usage {
       chats: numberOrZero(parsed.chats),
       searches: numberOrZero(parsed.searches),
       reads: numberOrZero(parsed.reads),
+      builds: numberOrZero(parsed.builds),
     };
   } catch {
     return empty;
@@ -162,6 +173,22 @@ export function readsLeft(): boolean {
 export function noteRead(): void {
   const usage = loadUsage();
   usage.reads += 1;
+  saveUsage(usage);
+}
+
+export function buildCap(): number {
+  const cap = capNumber("DAILY_BUILD_CAP", "daily_build_cap", 3);
+  setSetting("daily_build_cap", String(cap));
+  return cap;
+}
+
+export function buildsLeft(): boolean {
+  return loadUsage().builds < buildCap();
+}
+
+export function noteBuild(): void {
+  const usage = loadUsage();
+  usage.builds += 1;
   saveUsage(usage);
 }
 

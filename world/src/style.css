@@ -157,25 +157,6 @@ button:disabled {
   line-height: 1;
 }
 
-#season-switch {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-#season-switch button {
-  min-height: 28px;
-  padding: 2px 8px;
-  font-size: 0.75rem;
-  background: rgba(255, 250, 242, 0.88);
-}
-
-#season-switch button[aria-pressed="true"] {
-  background: var(--navy);
-  color: #f7f4ee;
-}
-
 #actions {
   display: flex;
   flex-wrap: wrap;
