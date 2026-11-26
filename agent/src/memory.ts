@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoRoot } from "./env.js";
+import { memoryDir } from "./env.js";
 
 export type MemoryFile = "identity.md" | "interests.md" | "projects.md";
 
 function fullPath(file: MemoryFile): string {
-  return path.join(repoRoot(), "memory", file);
+  return path.join(memoryDir(), file);
 }
 
 export function readMemory(file: MemoryFile): string {

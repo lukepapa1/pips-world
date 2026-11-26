@@ -208,6 +208,7 @@ export function createUI(
   const diaryCount = must<HTMLElement>("diary-count");
   const mailCount = must<HTMLElement>("mail-count");
   const pause = must<HTMLButtonElement>("pause");
+  const logout = must<HTMLButtonElement>("logout");
   const banner = must<HTMLElement>("banner");
   const feed = must<HTMLElement>("feed");
   const feedList = must<HTMLElement>("feed-list");
@@ -296,6 +297,10 @@ export function createUI(
   async function loadChat(): Promise<void> {
     try {
       const response = await fetch(`/api/chat?session=${encodeURIComponent(chatSession())}`);
+      if (response.status === 401) {
+        location.href = "/login";
+        return;
+      }
       if (!response.ok) return;
       const body = (await response.json()) as {
         sessionId?: string;
@@ -555,6 +560,11 @@ export function createUI(
     const next = !getState().paused;
     if (!send({ type: "set_paused", paused: next })) showToast("Not connected.");
   });
+  logout.addEventListener("click", () => {
+    fetch("/logout", { method: "POST" }).finally(() => {
+      location.href = "/login";
+    });
+  });
   feedToggle.addEventListener("click", () => {
     feedOpen = !feedOpen;
     feed.classList.toggle("collapsed", !feedOpen);
@@ -609,6 +619,10 @@ export function createUI(
           messages?: ChatLine[];
           message?: string;
         };
+        if (response.status === 401) {
+          location.href = "/login";
+          return;
+        }
         if (body.sessionId) localStorage.setItem(CHAT_SESSION, body.sessionId);
         if (body.messages) chatLines = body.messages;
         if (!response.ok || body.ok === false) showToast(body.message || "Pip did not answer.");

@@ -18,12 +18,20 @@ import {
   type WorldEvent,
   isDigestRow,
 } from "@pips/shared";
-import { repoRoot } from "./env.js";
+import { sqliteFile } from "./env.js";
 
 let db: Database.Database;
 
 export function databasePath(): string {
-  return path.join(repoRoot(), "data", "pips.sqlite");
+  return sqliteFile();
+}
+
+export function rememberTick(at: string): void {
+  setSetting("last_tick_at", at);
+}
+
+export function lastTickAt(): string | null {
+  return getSetting("last_tick_at");
 }
 
 export function openDatabase(): void {

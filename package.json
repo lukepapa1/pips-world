@@ -2,6 +2,9 @@
   "name": "pips-world",
   "private": true,
   "version": "0.1.0",
+  "engines": {
+    "node": ">=22"
+  },
   "workspaces": [
     "shared",
     "agent",
@@ -11,6 +14,8 @@
     "dev": "concurrently -n agent,world -c cyan,green \"npm run dev -w @pips/agent\" \"npm run dev -w @pips/world\"",
     "dev:agent": "npm run dev -w @pips/agent",
     "dev:world": "npm run dev -w @pips/world",
+    "build": "npm run build -w @pips/world",
+    "start": "npm run start -w @pips/agent",
     "tick": "npm run tick -w @pips/agent",
     "digest": "npm run digest -w @pips/agent",
     "check": "npm run check -w @pips/agent && npm run check -w @pips/world"

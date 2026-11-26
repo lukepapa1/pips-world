@@ -1,4 +1,5 @@
 import cron from "node-cron";
+import { redactSecrets } from "./env.js";
 import { runAgentTick } from "./loop.js";
 
 let task: { stop: () => void } | null = null;
@@ -35,7 +36,8 @@ export function startScheduler(): void {
         if (!result.ok) console.log(result.message);
       })
       .catch((error: unknown) => {
-        console.error("Tick failed:", error);
+        const message = error instanceof Error ? error.message : "Tick failed.";
+        console.error(redactSecrets(`Tick failed: ${message}`));
       });
   });
 }

@@ -8,8 +8,10 @@ import {
   makeEvent,
   recentDiary,
   releaseTickLock,
+  rememberTick,
   saveEvents,
 } from "./db.js";
+import { redactSecrets } from "./env.js";
 import { broadcast } from "./hub.js";
 import {
   BusyError,
@@ -34,7 +36,7 @@ import {
 } from "./tools.js";
 import { unseenChatNotes } from "./chat.js";
 import { generateDailyDigest } from "./digest.js";
-import { callsLeft, noteCall, noteTick, noteTokens, ticksLeft, tokensLeft } from "./usage.js";
+import { callsLeft, callsToday, noteCall, noteTick, noteTokens, ticksLeft, tokensLeft } from "./usage.js";
 
 const MAX_ROUNDS = 6;
 
@@ -67,9 +69,25 @@ export type TickResult = {
 };
 
 let busy = false;
+let accepting = true;
 
 export function tickInProgress(): boolean {
   return busy;
+}
+
+export function stopAcceptingTicks(): void {
+  accepting = false;
+}
+
+export async function waitForTickToFinish(): Promise<void> {
+  const deadline = Date.now() + 15 * 60 * 1000;
+  while (busy) {
+    if (Date.now() > deadline) {
+      console.error("The current tick did not finish within 15 minutes.");
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
 }
 
 export function ticksPerDay(): number {
@@ -109,7 +127,9 @@ function capDiary(limit: "calls" | "tokens" | "ticks"): string {
 }
 
 function finish(tick: number, kinds: string[], message: string): TickResult {
-  console.log(message);
+  const at = new Date().toISOString();
+  rememberTick(at);
+  console.log(`${message}. Calls today: ${callsToday()}.`);
   return { ok: true, tick, day: dayFromTick(tick), kinds, message };
 }
 
@@ -284,7 +304,7 @@ async function execute(): Promise<TickResult> {
       publishDiary(tick, capDiary(error.limit), kinds);
     } else {
       const detail = error instanceof LlmError ? error.message : "Tick failed.";
-      console.error(`Tick ${tick} failed: ${detail}`);
+      console.error(redactSecrets(`Tick ${tick} failed: ${detail}`));
       if (!flags.wroteDiary) {
         publishDiary(tick, "This hour stopped on an error before I could do anything else.", kinds);
       }
@@ -304,7 +324,7 @@ async function execute(): Promise<TickResult> {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Digest failed.";
-      console.error(`Tick ${tick} digest failed: ${message}`);
+      console.error(redactSecrets(`Tick ${tick} digest failed: ${message}`));
     }
   }
 
@@ -313,6 +333,15 @@ async function execute(): Promise<TickResult> {
 }
 
 export async function runAgentTick(): Promise<TickResult> {
+  if (!accepting) {
+    return {
+      ok: false,
+      tick: currentTick(),
+      day: dayFromTick(currentTick()),
+      kinds: [],
+      message: "The server is shutting down.",
+    };
+  }
   if (busy) {
     return {
       ok: false,

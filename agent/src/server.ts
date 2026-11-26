@@ -1,7 +1,20 @@
+import fs from "node:fs";
 import http from "node:http";
+import path from "node:path";
 import { WebSocketServer, type RawData } from "ws";
 import type { ClientMessage, SeasonPreview, SnapshotMessage } from "@pips/shared";
 import { isSeason } from "@pips/shared";
+import {
+  authRequired,
+  authorized,
+  checkPassword,
+  clearCookie,
+  clientAddress,
+  loginPage,
+  sessionCookie,
+} from "./auth.js";
+import { lastTickAt } from "./db.js";
+import { redactSecrets, worldDistDir } from "./env.js";
 import {
   decideRequest,
   isPaused,
@@ -115,10 +128,145 @@ function isPreview(value: unknown): value is SeasonPreview {
   return value === "auto" || isSeason(value);
 }
 
+function pathnameOf(url: string | undefined): string {
+  if (!url) return "/";
+  try {
+    return new URL(url, "http://127.0.0.1").pathname;
+  } catch {
+    return "/";
+  }
+}
+
+const FILE_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".json": "application/json",
+  ".map": "application/json",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
+  ".wasm": "application/wasm",
+};
+
+function sendHtml(res: http.ServerResponse, status: number, html: string): void {
+  res.writeHead(status, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(html);
+}
+
+function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+  res.end(JSON.stringify(body));
+}
+
+function loggedOut(req: http.IncomingMessage, res: http.ServerResponse): void {
+  res.writeHead(303, { Location: "/login", "set-cookie": clearCookie(req) });
+  res.end();
+}
+
+async function postedPassword(req: http.IncomingMessage): Promise<string> {
+  const raw = await readBody(req);
+  const type = req.headers["content-type"] ?? "";
+  if (type.includes("application/json")) {
+    const body = JSON.parse(raw) as { password?: unknown };
+    return typeof body.password === "string" ? body.password : "";
+  }
+  return new URLSearchParams(raw).get("password") ?? "";
+}
+
+function serveWorld(pathname: string, res: http.ServerResponse): boolean {
+  const root = worldDistDir();
+  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const file = path.resolve(root, relative);
+  if (file !== root && !file.startsWith(root + path.sep)) {
+    res.writeHead(403, { "content-type": "text/plain" });
+    res.end("Forbidden");
+    return true;
+  }
+  if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
+  const ext = path.extname(file).toLowerCase();
+  const cache = ext === ".html" ? "no-store" : "public, max-age=86400";
+  res.writeHead(200, {
+    "content-type": FILE_TYPES[ext] ?? "application/octet-stream",
+    "cache-control": cache,
+  });
+  fs.createReadStream(file).pipe(res);
+  return true;
+}
+
+function operatorRoute(method: string | undefined, pathname: string): boolean {
+  return method === "POST" && (pathname === "/api/tick" || pathname === "/api/digest");
+}
+
 export function startServer(): http.Server {
   const port = Number(process.env.PORT) || 3001;
   const server = http.createServer((req, res) => {
-    if (req.method === "GET" && req.url === "/api/health") {
+    const pathname = pathnameOf(req.url);
+    if (req.method === "GET" && pathname === "/health") {
+      sendJson(res, 200, { ok: true, lastTickAt: lastTickAt() });
+      return;
+    }
+    if (pathname === "/login" && (req.method === "GET" || req.method === "POST")) {
+      if (!authRequired()) {
+        sendHtml(res, 200, loginPage("off"));
+        return;
+      }
+      if (req.method === "GET") {
+        if (authorized(req)) {
+          res.writeHead(303, { Location: "/" });
+          res.end();
+          return;
+        }
+        sendHtml(res, 200, loginPage("form"));
+        return;
+      }
+      postedPassword(req)
+        .then((password) => {
+          const result = checkPassword(password, clientAddress(req));
+          if (result === "ok") {
+            res.writeHead(303, { Location: "/", "set-cookie": sessionCookie(req) });
+            res.end();
+            console.log("Owner logged in.");
+            return;
+          }
+          if (result === "limited") {
+            console.log("Login rate limited.");
+            sendHtml(res, 429, loginPage("limited"));
+            return;
+          }
+          console.log("Login failed.");
+          sendHtml(res, 401, loginPage("bad"));
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : "Login failed.";
+          console.error(redactSecrets(`Login failed: ${message}`));
+          sendHtml(res, 400, loginPage("bad"));
+        });
+      return;
+    }
+    if (req.method === "POST" && pathname === "/logout") {
+      loggedOut(req, res);
+      return;
+    }
+    if (authRequired() && !operatorRoute(req.method, pathname) && !authorized(req)) {
+      if (pathname === "/") {
+        sendHtml(res, 200, loginPage("form"));
+        return;
+      }
+      sendJson(res, 401, { ok: false, message: "Login required." });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/api/health") {
       const snap = snapshot();
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -155,7 +303,8 @@ export function startServer(): http.Server {
           res.end(JSON.stringify(result));
         })
         .catch((error: unknown) => {
-          console.error("Chat failed:", error);
+          const message = error instanceof Error ? error.message : "Chat failed.";
+          console.error(redactSecrets(`Chat failed: ${message}`));
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: false, message: "Could not read that message." }));
         });
@@ -192,7 +341,7 @@ export function startServer(): http.Server {
         })
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : "Digest failed.";
-          console.error("Digest failed:", message);
+          console.error(redactSecrets(`Digest failed: ${message}`));
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: false, message }));
         });
@@ -215,17 +364,33 @@ export function startServer(): http.Server {
           res.end(JSON.stringify(result));
         })
         .catch((error: unknown) => {
-          console.error("Tick failed:", error);
+          const message = error instanceof Error ? error.message : "Tick failed.";
+          console.error(redactSecrets(`Tick failed: ${message}`));
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: false, message: "Tick failed." }));
         });
       return;
     }
+    if ((req.method === "GET" || req.method === "HEAD") && serveWorld(pathname, res)) return;
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("Not found");
   });
 
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    if (pathnameOf(req.url) !== "/ws") {
+      socket.destroy();
+      return;
+    }
+    if (authRequired() && !authorized(req)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  });
   wss.on("connection", (socket) => {
     addSocket(socket);
     socket.send(JSON.stringify(snapshot()));

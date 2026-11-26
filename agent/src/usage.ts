@@ -89,6 +89,10 @@ export function callsLeft(): boolean {
   return loadUsage().calls < caps().calls;
 }
 
+export function callsToday(): number {
+  return loadUsage().calls;
+}
+
 export function tokensLeft(): boolean {
   return loadUsage().tokens < caps().tokens;
 }
