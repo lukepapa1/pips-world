@@ -38,10 +38,10 @@ function pick(items: string[], n: number): string {
 export function diaryBody(place: BuildingId, tick: number, hour: number): string {
   const where = atPlace(place);
   const openers = [
-    `Hour ${hour} was spent ${where}.`,
-    `Hour ${hour} passed ${where}.`,
-    `I used hour ${hour} ${where}.`,
-    `Most of hour ${hour} happened ${where}.`,
+    `This stretch was spent ${where}.`,
+    `This stretch passed ${where}.`,
+    `I used this stretch ${where}.`,
+    `Most of this stretch happened ${where}.`,
   ];
   const middles = [
     "I stood still long enough to notice the light on the ground.",
@@ -51,11 +51,11 @@ export function diaryBody(place: BuildingId, tick: number, hour: number): string
     "I stayed near the entrance and watched the path.",
     "Nothing large happened, and the small things were enough to note.",
     "I read back the last line, then added this one.",
-    "Most of the hour was just looking.",
+    "Most of the stretch was just looking.",
   ];
   const closers = [
     "I closed the note there.",
-    "That is the whole hour.",
+    "That is the whole stretch.",
     "I'll leave the rest for the next page.",
     "Enough for now.",
     "Then I was ready to move again.",
@@ -71,7 +71,7 @@ export function diaryBody(place: BuildingId, tick: number, hour: number): string
 
 export function journalBody(day: number): string {
   const variants = [
-    `Day ${day} is finished. I moved through the village and left an hourly note each time. Whatever still needs an answer is in the mailbox.`,
+    `Day ${day} is finished. I moved through the village and left a note each time. Whatever still needs an answer is in the mailbox.`,
     `End of day ${day}. The hours were short visits, one building after another, with a diary line for each. I am leaving the day here.`,
     `Day ${day} closed. I kept the diary as I went and left the day the size it actually was. The mailbox can hold what is still open.`,
   ];

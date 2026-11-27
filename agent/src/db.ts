@@ -31,6 +31,7 @@ import {
   type PathRecord,
 } from "@pips/shared";
 import { sqliteFile } from "./env.js";
+import { runtimeConfig } from "./runtimeConfig.js";
 
 let db: Database.Database;
 
@@ -245,7 +246,22 @@ function migrate(): void {
       body TEXT NOT NULL,
       PRIMARY KEY (name, version)
     );
+
+    CREATE TABLE IF NOT EXISTS tick_slots (
+      slot_id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS recall (
+      kind TEXT NOT NULL,
+      key TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      at TEXT NOT NULL,
+      PRIMARY KEY (kind, key)
+    );
   `);
+  ensureDiaryHidden();
   db.prepare(
     `INSERT INTO settings (key, value) VALUES ('paused', '0')
      ON CONFLICT(key) DO NOTHING`,
@@ -358,6 +374,18 @@ function mapDiary(row: {
   };
 }
 
+function ensureDiaryHidden(): void {
+  const columns = db.prepare(`PRAGMA table_info(diary)`).all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "hidden")) {
+    db.exec(`ALTER TABLE diary ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`);
+  }
+}
+
+export function hideDiary(id: string): boolean {
+  const result = db.prepare(`UPDATE diary SET hidden = 1 WHERE id = ? AND hidden = 0`).run(id);
+  return result.changes > 0;
+}
+
 export function recentDiary(limit: number): DiaryRow[] {
   const rows = db
     .prepare(
@@ -408,6 +436,7 @@ export function listDiary(): DiaryRow[] {
   const rows = db
     .prepare(
       `SELECT id, day, tick, body, created_at, read_at FROM diary
+       WHERE hidden = 0
        ORDER BY day DESC, tick DESC, created_at DESC`,
     )
     .all() as Array<{
@@ -645,7 +674,7 @@ export function pushPrefs(): PushPrefs {
 }
 
 export function pushEnabled(kind: PushKind): boolean {
-  return pushPrefs()[kind];
+  return runtimeConfig().alerts[kind];
 }
 
 export function savePushPrefs(patch: Partial<PushPrefs>): PushPrefs {
@@ -864,6 +893,117 @@ export function acquireTickLock(): boolean {
 
 export function releaseTickLock(): void {
   db.prepare(`DELETE FROM settings WHERE key = ?`).run(TICK_LOCK);
+}
+
+export function claimSlot(slotId: string): "claimed" | "running" | "done" {
+  let result: "claimed" | "running" | "done" = "done";
+  const run = db.transaction(() => {
+    const row = db.prepare(`SELECT status FROM tick_slots WHERE slot_id = ?`).get(slotId) as
+      | { status: string }
+      | undefined;
+    if (row?.status === "running") {
+      result = "running";
+      return;
+    }
+    if (row) {
+      result = "done";
+      return;
+    }
+    db.prepare(`INSERT INTO tick_slots (slot_id, status, started_at) VALUES (?, 'running', ?)`).run(
+      slotId,
+      new Date().toISOString(),
+    );
+    result = "claimed";
+  });
+  run.immediate();
+  return result;
+}
+
+export function finishSlot(slotId: string, status: "done" | "skipped"): void {
+  db.prepare(`UPDATE tick_slots SET status = ? WHERE slot_id = ?`).run(status, slotId);
+}
+
+export function slotStatus(slotId: string): string | null {
+  const row = db.prepare(`SELECT status FROM tick_slots WHERE slot_id = ?`).get(slotId) as
+    | { status: string }
+    | undefined;
+  return row?.status ?? null;
+}
+
+export function rememberRecall(kind: string, key: string, summary: string, at = new Date().toISOString()): void {
+  db.prepare(
+    `INSERT INTO recall (kind, key, summary, at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(kind, key) DO UPDATE SET summary = excluded.summary, at = excluded.at`,
+  ).run(kind, key, summary.slice(0, 1500), at);
+}
+
+export function recallWithin(kind: string, key: string, sinceMs: number, now = Date.now()): string | null {
+  const row = db.prepare(`SELECT summary, at FROM recall WHERE kind = ? AND key = ?`).get(kind, key) as
+    | { summary: string; at: string }
+    | undefined;
+  if (!row) return null;
+  const at = Date.parse(row.at);
+  if (!Number.isFinite(at) || now - at > sinceMs) return null;
+  return row.summary;
+}
+
+export function recentNotes(limit: number): NoteRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, topic, body, sources, created_at, touched_at, prompted_at FROM notes
+       ORDER BY touched_at DESC LIMIT ?`,
+    )
+    .all(limit) as NoteSql[];
+  return rows.map(mapNote);
+}
+
+export function recentTickSummaries(limit: number): string[] {
+  const rows = db
+    .prepare(`SELECT tick, kind, payload FROM events ORDER BY tick DESC, rowid DESC LIMIT 400`)
+    .all() as Array<{ tick: number; kind: string; payload: string }>;
+  const lines: string[] = [];
+  let current = -1;
+  let parts: string[] = [];
+  const push = () => {
+    if (current < 0) return;
+    lines.push(`Tick ${current}: ${parts.join(", ") || "quiet"}`);
+  };
+  for (const row of rows) {
+    if (lines.length >= limit) break;
+    if (row.tick !== current) {
+      push();
+      if (lines.length >= limit) break;
+      current = row.tick;
+      parts = [];
+    }
+    parts.push(eventBit(row.kind, row.payload));
+  }
+  if (lines.length < limit) push();
+  return lines.slice(0, limit).reverse();
+}
+
+function eventBit(kind: string, payload: string): string {
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    if (kind === "browse") {
+      const query = typeof parsed.query === "string" ? parsed.query : "";
+      const url = typeof parsed.url === "string" ? parsed.url : "";
+      return query ? `search ${clipBit(query)}` : `read ${clipBit(url)}`;
+    }
+    if (kind === "build") return `build ${String(parsed.type ?? parsed.action ?? "object")}`;
+    if (kind === "diary") return "diary";
+    if (kind === "move") return `move ${String(parsed.to ?? "")}`.trim();
+    if (typeof parsed.title === "string") return `${kind} ${clipBit(parsed.title)}`;
+    if (typeof parsed.topic === "string") return `${kind} ${clipBit(parsed.topic)}`;
+    return kind;
+  } catch {
+    return kind;
+  }
+}
+
+function clipBit(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length <= 60 ? trimmed : `${trimmed.slice(0, 60)}…`;
 }
 
 type ChatSql = {
@@ -1104,7 +1244,7 @@ export function deleteWorldObject(id: string): void {
 }
 
 export function blueprintApprovalRequired(): boolean {
-  return getSetting("blueprint_approval") === "1";
+  return runtimeConfig().blueprintApproval;
 }
 
 export function setBlueprintApproval(required: boolean): void {

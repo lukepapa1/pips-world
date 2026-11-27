@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { BUILDING_NAMES, isBuildingId, type BrowseTool, type WorldEvent } from "@pips/shared";
-import { lastMoveTarget, makeEvent, rememberIdentity, saveEvents } from "./db.js";
+import { lastMoveTarget, listRequests, makeEvent, recallWithin, recentDiary, rememberIdentity, rememberRecall, saveEvents } from "./db.js";
+import { nearDuplicate, noteDuplicate } from "./duplicates.js";
 import { broadcast } from "./hub.js";
 import type { LookImage, ToolSpec } from "./llm.js";
 import { readMemory, writeMemory } from "./memory.js";
@@ -78,7 +79,8 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "write_diary",
-    description: "Save this hour's diary entry in your own words. Call this at the end of every hour.",
+    description:
+      "Save the diary entry for this tick, about what you did and noticed since your last entry. Call this at the end of every tick.",
     parameters: TEXT_SCHEMA,
     required: ["text"],
   },
@@ -201,7 +203,10 @@ export const PIP_TOOLS: ToolSpec[] = [
       properties: {
         topic: { type: "string", description: "The topic you chose." },
         why: { type: "string", description: "Why you want to spend time on it." },
-        planned_ticks: { type: "number", description: "How many ticks you plan, from 1 to 12." },
+        planned_ticks: {
+          type: "number",
+          description: "How many 30-minute ticks you plan, from 1 to 12.",
+        },
       },
       required: ["topic", "why", "planned_ticks"],
     },
@@ -319,6 +324,34 @@ export const PIP_TOOLS: ToolSpec[] = [
     },
     required: ["id"],
   },
+  {
+    name: "propose_expansion",
+    description:
+      "Ask the owner to approve an expansion of the village. Say what it is. A near-duplicate of one already filed is returned instead.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short name for the expansion." },
+        detail: { type: "string", description: "What you want considered." },
+      },
+      required: ["title", "detail"],
+    },
+    required: ["title", "detail"],
+  },
+  {
+    name: "propose_mechanic",
+    description:
+      "Ask the owner to approve a mechanic. Say what it is. A near-duplicate of one already filed is returned instead.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short name for the mechanic." },
+        detail: { type: "string", description: "What you want considered." },
+      },
+      required: ["title", "detail"],
+    },
+    required: ["title", "detail"],
+  },
 ];
 
 export const DIARY_TOOL = PIP_TOOLS.filter((tool) => tool.name === "write_diary");
@@ -328,6 +361,7 @@ export type ToolFlags = {
   wroteDiary: boolean;
   wroteJournal: boolean;
   webCalls: number;
+  diaryAsked: boolean;
 };
 
 export type ToolOutcome = {
@@ -407,13 +441,17 @@ export async function executeTool(
       return { result: openCreation(args.id), kind: null };
     case "finish_creation":
       return runFinishCreation(args, tick);
+    case "propose_expansion":
+      return propose("Expansion", args, tick);
+    case "propose_mechanic":
+      return propose("Mechanic", args, tick);
     default:
       return { result: "Unknown tool.", kind: null };
   }
 }
 
 function beginWeb(flags: ToolFlags): string | null {
-  if (flags.webCalls >= webCallsPerTick()) return "The web call limit for this hour is used up.";
+  if (flags.webCalls >= webCallsPerTick()) return "The web call limit for this tick is used up.";
   flags.webCalls += 1;
   return null;
 }
@@ -436,6 +474,11 @@ async function runSearch(
   const query = typeof args.query === "string" ? args.query.trim() : "";
   if (!query) return { result: "query is empty.", kind: null };
   if (query.length > 300) return { result: "query is too long.", kind: null };
+  const cachedSearch = recallWithin("search", queryKey(query), 24 * 60 * 60 * 1000);
+  if (cachedSearch !== null) {
+    noteDuplicate();
+    return { result: `You already searched for this in the last day.\n${cachedSearch}`, kind: null };
+  }
   const blocked = beginWeb(flags);
   if (blocked) return { result: blocked, kind: null };
   if (!searchesLeft()) {
@@ -446,7 +489,9 @@ async function runSearch(
     const hits = await webSearch(query);
     const url = hits[0]?.url ?? "";
     logBrowse("web_search", url, query, tick);
-    return { result: formatSearch(query, hits), kind: "browse" };
+    const formatted = formatSearch(query, hits);
+    rememberRecall("search", queryKey(query), formatted);
+    return { result: formatted, kind: "browse" };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Search failed.";
     logBrowse("web_search", "", query, tick);
@@ -462,6 +507,11 @@ async function runRead(
   const url = typeof args.url === "string" ? args.url.trim() : "";
   if (!url) return { result: "url is empty.", kind: null };
   if (url.length > 2000) return { result: "url is too long.", kind: null };
+  const cachedPage = recallWithin("page", pageKey(url), 7 * 24 * 60 * 60 * 1000);
+  if (cachedPage !== null) {
+    noteDuplicate();
+    return { result: `You already read this page in the last 7 days.\n${cachedPage}`, kind: null };
+  }
   const blocked = beginWeb(flags);
   if (blocked) return { result: blocked, kind: null };
   let safe: string;
@@ -480,6 +530,7 @@ async function runRead(
   try {
     const page = await readPage(safe);
     logBrowse("read_page", page.url, null, tick);
+    rememberRecall("page", pageKey(page.url), page.text);
     return { result: page.text, kind: "browse" };
   } catch (error) {
     const message = error instanceof Error ? error.message : "The page could not be read.";
@@ -578,6 +629,15 @@ function moveTo(args: Record<string, unknown>, tick: number): ToolOutcome {
 function writeDiary(args: Record<string, unknown>, tick: number, flags: ToolFlags): ToolOutcome {
   const parsed = textOf(args, TEXT_MAX);
   if ("error" in parsed) return { result: parsed.error, kind: null };
+  const previous = recentDiaryBody();
+  if (previous && nearDuplicate(previous, parsed.text) && !flags.diaryAsked) {
+    flags.diaryAsked = true;
+    noteDuplicate();
+    return {
+      result: "This is too close to your last diary entry. Write a fresh one about what is new since then.",
+      kind: null,
+    };
+  }
   publish(
     makeEvent<Extract<WorldEvent, { kind: "diary" }>>(
       "diary",
@@ -616,4 +676,42 @@ function updateFile(file: "identity.md" | "interests.md", args: Record<string, u
 export function memorySnapshot(file: "identity.md" | "interests.md" | "projects.md"): string {
   const text = readMemory(file).trim();
   return text || "(empty)";
+}
+
+function recentDiaryBody(): string | null {
+  const rows = recentDiary(1);
+  return rows[0]?.body ?? null;
+}
+
+function queryKey(query: string): string {
+  return query.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function pageKey(url: string): string {
+  const bare = url.split("#")[0]?.trim().toLowerCase() ?? "";
+  return bare.endsWith("/") ? bare.slice(0, -1) : bare;
+}
+
+function propose(kind: "Expansion" | "Mechanic", args: Record<string, unknown>, tick: number): ToolOutcome {
+  const title = typeof args.title === "string" ? args.title.trim() : "";
+  const detail = typeof args.detail === "string" ? args.detail.trim() : "";
+  if (!title) return { result: "A title is needed.", kind: null };
+  if (!detail) return { result: "Say what you want considered.", kind: null };
+  const label = `${kind}: ${title}`;
+  const same = listRequests().find((request) => nearDuplicate(request.title, label) || nearDuplicate(request.title, title));
+  if (same) {
+    noteDuplicate();
+    return {
+      result: `Request ${same.id} already covers this (${same.status}): ${same.title}. ${same.body}`,
+      kind: null,
+    };
+  }
+  publish(
+    makeEvent<Extract<WorldEvent, { kind: "request" }>>(
+      "request",
+      { requestId: randomUUID(), title: label.slice(0, 120), body: detail.slice(0, 2000) },
+      tick,
+    ),
+  );
+  return { result: `Filed for the owner: ${label}.`, kind: "request" };
 }

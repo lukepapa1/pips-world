@@ -8,9 +8,10 @@ import {
 } from "./clock.js";
 import { deliverDueDigest } from "./digest.js";
 import { redactSecrets } from "./env.js";
-import { currentDecision, describeDecision, noteGrowthDay, paceCron, readPace, startupLine } from "./growth.js";
+import { claimSlot, finishSlot } from "./db.js";
+import { currentDecision, currentSlotId, describeDecision, noteGrowthDay, paceCron, startupLine } from "./growth.js";
 import { callsToday, caps } from "./usage.js";
-import { runAgentTick } from "./loop.js";
+import { runAgentTick, tickInProgress } from "./loop.js";
 import { runEveningReflection, runWeeklyReflection } from "./reflect.js";
 
 let tasks: Array<{ stop: () => void | Promise<void>; destroy?: () => void | Promise<void> }> = [];
@@ -18,7 +19,7 @@ let tickTask: { stop: () => void | Promise<void>; destroy?: () => void | Promise
 let running = false;
 
 export function cronExpression(): string {
-  return paceCron(readPace());
+  return paceCron();
 }
 
 function track(expression: string, name: string, fn: () => void): void {
@@ -27,20 +28,38 @@ function track(expression: string, name: string, fn: () => void): void {
   tasks.push(cron.schedule(expression, fn, { timezone: zone, name }));
 }
 
-function runScheduledTick(): void {
+function skipSlot(slot: string, reason: string): void {
+  console.log(`Skipping slot ${slot}. ${reason} Not queued.`);
+  if (claimSlot(slot) === "claimed") finishSlot(slot, "skipped");
+}
+
+export function runScheduledTick(): void {
+  const slot = currentSlotId();
+  if (tickInProgress()) {
+    skipSlot(slot, "A tick is still running.");
+    return;
+  }
   const decision = currentDecision();
   const limits = caps();
   console.log(describeDecision(decision, callsToday(), limits.calls));
   if (decision.action !== "run") {
     noteGrowthDay(decision.action);
+    skipSlot(slot, decision.action === "sleep" ? "Pip is asleep." : "The call share for this slot is used up.");
+    return;
+  }
+  const claimed = claimSlot(slot);
+  if (claimed !== "claimed") {
+    console.log(`Skipping slot ${slot}. It already started (${claimed}). Not queued.`);
     return;
   }
   runAgentTick({ morning: decision.morning, callShare: decision.callShare })
     .then((result) => {
       noteGrowthDay("run");
+      finishSlot(slot, "done");
       if (!result.ok) console.log(result.message);
     })
     .catch((error: unknown) => {
+      finishSlot(slot, "done");
       const message = error instanceof Error ? error.message : "Tick failed.";
       console.error(redactSecrets(`Tick failed: ${message}`));
     });

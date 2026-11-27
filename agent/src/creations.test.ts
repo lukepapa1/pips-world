@@ -80,7 +80,9 @@ test("a creation can gain a version, finish, and be archived without deleting it
     assert.equal(fs.existsSync(folder), true);
     assert.equal(creations.libraryView().items.find((item) => item.id === id)?.archived, true);
     assert.equal(galleryPicks(creations.libraryView().items).some((item) => item.id === id), false);
-    db.setSetting("creation_max_bytes", "40");
+    process.env.CREATION_MAX_MB = String(40 / (1024 * 1024));
+    const { loadRuntimeConfig } = await import("./runtimeConfig.js");
+    loadRuntimeConfig();
     const tooBig = creations.saveCreation({
       type: "writing",
       title: "Too big",
@@ -92,7 +94,9 @@ test("a creation can gain a version, finish, and be archived without deleting it
     assert.match(tooBig.result, /size limit/);
     assert.equal(creations.publicPage(), null);
     creations.publishCreation(id);
-    creations.setPublicCreations(true);
+    process.env.CREATIONS_PUBLIC = "1";
+    const { loadRuntimeConfig: reloadPublic } = await import("./runtimeConfig.js");
+    reloadPublic();
     const page = creations.publicPage() ?? "";
     assert.equal(page.includes("Sample sketch"), false);
     const other = creations.saveCreation({
@@ -111,6 +115,10 @@ test("a creation can gain a version, finish, and be archived without deleting it
     const zip = creations.zipVersion(writingId, 1);
     assert.ok(zip && zip.length > 30);
   } finally {
+    delete process.env.CREATION_MAX_MB;
+    delete process.env.CREATIONS_PUBLIC;
+    const { loadRuntimeConfig: restoreConfig } = await import("./runtimeConfig.js");
+    restoreConfig();
     db.closeDatabase();
     fs.rmSync(dir, { recursive: true, force: true });
     delete process.env.DATA_DIR;

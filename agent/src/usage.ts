@@ -1,5 +1,6 @@
 import { ownerDate } from "./clock.js";
 import { getSetting, setSetting } from "./db.js";
+import { runtimeConfig } from "./runtimeConfig.js";
 
 type Usage = {
   date: string;
@@ -24,30 +25,20 @@ function localDate(): string {
   return ownerDate(new Date());
 }
 
-function capNumber(envName: string, settingKey: string, fallback: number): number {
-  const raw = process.env[envName];
-  if (raw !== undefined && raw.trim() !== "") {
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
-  }
-  const stored = getSetting(settingKey);
-  if (stored !== null) {
-    const parsed = Number(stored);
-    if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
-  }
-  return fallback;
+export function caps(): Caps {
+  const config = runtimeConfig();
+  return { ticks: config.dailyTickCap, calls: config.dailyCallCap, tokens: config.dailyTokenCap };
 }
 
-export function caps(): Caps {
-  const resolved = {
-    ticks: capNumber("DAILY_TICK_CAP", "daily_tick_cap", 48),
-    calls: capNumber("DAILY_CALL_CAP", "daily_call_cap", 500),
-    tokens: capNumber("DAILY_TOKEN_CAP", "daily_token_cap", 500_000),
+export function usageSnapshot(): { calls: number; reads: number; searches: number; builds: number; ticks: number } {
+  const usage = loadUsage();
+  return {
+    calls: usage.calls,
+    reads: usage.reads,
+    searches: usage.searches,
+    builds: usage.builds,
+    ticks: usage.ticks,
   };
-  setSetting("daily_tick_cap", String(resolved.ticks));
-  setSetting("daily_call_cap", String(resolved.calls));
-  setSetting("daily_token_cap", String(resolved.tokens));
-  return resolved;
 }
 
 function loadUsage(): Usage {
@@ -119,9 +110,7 @@ export function noteCall(): void {
 }
 
 export function chatCap(): number {
-  const cap = capNumber("DAILY_CHAT_CAP", "daily_chat_cap", 100);
-  setSetting("daily_chat_cap", String(cap));
-  return cap;
+  return runtimeConfig().dailyChatCap;
 }
 
 export function chatsLeft(): boolean {
@@ -135,17 +124,11 @@ export function noteChat(): void {
 }
 
 export function webCallsPerTick(): number {
-  const raw = process.env.WEB_CALLS_PER_TICK;
-  if (raw === undefined || raw.trim() === "") return 10;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return 10;
-  return Math.floor(parsed);
+  return runtimeConfig().webCallsPerTick;
 }
 
 export function searchCap(): number {
-  const cap = capNumber("DAILY_SEARCH_CAP", "daily_search_cap", 30);
-  setSetting("daily_search_cap", String(cap));
-  return cap;
+  return runtimeConfig().dailySearchCap;
 }
 
 export function searchesLeft(): boolean {
@@ -159,9 +142,7 @@ export function noteSearch(): void {
 }
 
 export function readCap(): number {
-  const cap = capNumber("DAILY_READ_CAP", "daily_read_cap", 200);
-  setSetting("daily_read_cap", String(cap));
-  return cap;
+  return runtimeConfig().dailyReadCap;
 }
 
 export function readsLeft(): boolean {
@@ -175,9 +156,7 @@ export function noteRead(): void {
 }
 
 export function buildCap(): number {
-  const cap = capNumber("DAILY_BUILD_CAP", "daily_build_cap", 3);
-  setSetting("daily_build_cap", String(cap));
-  return cap;
+  return runtimeConfig().dailyBuildCap;
 }
 
 export function buildsLeft(): boolean {

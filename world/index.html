@@ -31,7 +31,7 @@
     <div id="scene"></div>
     <div id="ui">
       <header id="hud">
-        <button type="button" id="open-settings" aria-label="Settings">
+        <button type="button" id="open-settings" aria-label="Status">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
         <div id="hud-copy">
@@ -66,7 +66,6 @@
           <button type="button" data-pip="chat">Chat</button>
           <button type="button" data-pip="diary">Diary</button>
           <button type="button" data-pip="inbox">Inbox</button>
-          <button type="button" id="pause" aria-pressed="false">Pause</button>
         </div>
         <section id="feed" aria-label="Activity">
         <header>
@@ -146,61 +145,17 @@
       <section id="settings" class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
         <header>
           <div>
-            <h2 id="settings-title">Settings</h2>
-            <p>Pace, notifications, safety, sharing, and this phone.</p>
+            <h2 id="settings-title">Status</h2>
+            <p>How Pip is set up. Nothing here can be edited.</p>
           </div>
           <button type="button" class="close" data-close="settings">Close</button>
         </header>
         <div class="panel-body">
-          <label class="pause-row">
-            <span>
-              <strong>Pause Pip</strong>
-              <small>He stays put until you resume. Nothing else about him changes.</small>
-            </span>
-            <button type="button" id="pause-switch" aria-pressed="false">Off</button>
-          </label>
-          <label class="search-field">
-            <span class="sr-only">Search settings</span>
-            <input id="settings-search" type="search" placeholder="Search settings" autocomplete="off" />
-          </label>
-          <section class="setting-group" data-keywords="pace calm active fast awake hours reads studies growth">
-            <h3>Pace</h3>
-            <p>How often Pip wakes, and how many pages he may read in a day.</p>
-            <button type="button" id="open-growth" class="sr-only" tabindex="-1" hidden>Growth</button>
-            <div id="growth-mount"></div>
-          </section>
-          <section class="setting-group" data-keywords="notifications alerts digest push test">
-            <h3>Notifications</h3>
-            <p>What this phone tells you about. A test is not an inbox item.</p>
-            <button type="button" id="open-alerts" class="sr-only" tabindex="-1" hidden>Alerts</button>
-            <div id="alerts-mount"></div>
-          </section>
-          <section class="setting-group" data-keywords="safety pause graphics quality approval blueprints">
-            <h3>Safety</h3>
-            <p>Pause is above. Graphics and blueprint approval live here too.</p>
-            <button type="button" id="quality" aria-pressed="true" aria-label="Graphics quality: high">Graphics: high</button>
-            <label class="switch"><input type="checkbox" id="approval-switch" /> Require approval before a new blueprint goes live</label>
-            <button type="button" id="open-blueprints">Open blueprint versions</button>
-          </section>
-          <section class="setting-group" data-keywords="public sharing storage budget creations">
-            <h3>Public sharing</h3>
-            <p>Nothing is public until you say so. Drafts stay on this phone.</p>
-            <label class="switch"><input type="checkbox" id="public-switch" /> A public page of creations you mark public</label>
-            <form id="storage-form">
-              <label>Storage budget, megabytes <input name="megabytes" type="number" min="64" max="20000" value="2048" /></label>
-              <button type="submit">Save budget</button>
-            </form>
-            <form id="max-form">
-              <label>Largest creation, megabytes <input name="megabytes" type="number" min="1" max="512" value="32" /></label>
-              <button type="submit">Save size</button>
-            </form>
-          </section>
-          <section class="setting-group" data-keywords="account log out logout password">
-            <h3>Account</h3>
-            <p>Log out on this phone. Pip keeps his diary, creations, and village.</p>
-            <button type="button" id="logout">Log out</button>
-            <button type="button" id="open-digest" class="quiet-button">Open the latest digest <span id="digest-count" class="count" hidden>0</span></button>
-          </section>
+          <button type="button" id="pause" class="emergency" aria-pressed="false">Emergency pause</button>
+          <div id="status-body"><p>Loading status…</p></div>
+          <button type="button" id="open-blueprints" class="quiet-button">Blueprint versions</button>
+          <button type="button" id="open-digest" class="quiet-button">Open the latest digest <span id="digest-count" class="count" hidden>0</span></button>
+          <button type="button" id="logout">Log out</button>
         </div>
       </section>
 
@@ -246,13 +201,9 @@
           <button type="button" class="close" data-close="alerts">Close</button>
         </header>
         <div class="panel-body">
-          <p id="alerts-note" class="empty"></p>
+          <p id="alerts-note" class="empty">Notifications are set in the environment. This page does not change them.</p>
           <button type="button" id="alerts-enable" hidden>Turn on notifications</button>
-          <label class="switch"><input type="checkbox" data-kind="digest" /> Daily digest</label>
-          <label class="switch"><input type="checkbox" data-kind="request" /> New mailbox request</label>
-          <label class="switch"><input type="checkbox" data-kind="project" /> Pip finished a project</label>
-          <label class="switch"><input type="checkbox" data-kind="quiet" /> Pip's server went quiet</label>
-          <button type="button" id="alerts-test">Send test notification</button>
+          <button type="button" id="alerts-test" hidden>Send test notification</button>
         </div>
       </section>
 

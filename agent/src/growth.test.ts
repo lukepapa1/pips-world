@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { DateTime } from "luxon";
 import { validate } from "node-cron";
-import { daySlots, decideTick, intervalMinutes, paceCron, slotsInDay } from "./growth.js";
+import { clockSlot, currentSlotId, daySlots, decideTick, paceCron, slotsInDay, tickInterval } from "./growth.js";
+import { loadRuntimeConfig, tickCron } from "./runtimeConfig.js";
 
 const ZONE = "Australia/Melbourne";
 
@@ -14,50 +15,54 @@ function parts(isoUtc: string): { hour: number; minute: number } {
   return { hour: dt.hour, minute: dt.minute };
 }
 
-test("calm, active, and fast split an awake day into even slots", () => {
-  assert.equal(intervalMinutes("calm"), 60);
-  assert.equal(intervalMinutes("active"), 30);
-  assert.equal(intervalMinutes("fast"), 15);
-  assert.equal(slotsInDay(7, 23, "calm"), 16);
-  assert.equal(slotsInDay(7, 23, "active"), 32);
-  assert.equal(slotsInDay(7, 23, "fast"), 64);
-  assert.equal(daySlots(7, 23, "calm")[0]?.time, "07:00");
-  assert.equal(daySlots(7, 23, "calm")[0]?.morning, true);
-  assert.equal(daySlots(7, 23, "calm").at(-1)?.time, "22:00");
-  assert.equal(daySlots(7, 23, "fast").at(-1)?.time, "22:45");
-  assert.equal(validate(paceCron("calm")), true);
-  assert.equal(validate(paceCron("active")), true);
-  assert.equal(validate(paceCron("fast")), true);
+test("ticks land on :00 and :30 inside the awake window", () => {
+  loadRuntimeConfig();
+  assert.equal(tickInterval(), 30);
+  assert.equal(tickCron(), "0,30 * * * *");
+  assert.equal(paceCron(), "0,30 * * * *");
+  assert.equal(validate(paceCron()), true);
+  assert.equal(slotsInDay(7, 23, 30), 32);
+  const slots = daySlots(7, 23, 30);
+  assert.equal(slots[0]?.time, "07:00");
+  assert.equal(slots.at(-1)?.time, "22:30");
+  assert.equal(slots.every((slot) => slot.time.endsWith(":00") || slot.time.endsWith(":30")), true);
+  assert.equal(slots.some((slot) => slot.time.endsWith(":15")), false);
+  assert.equal(clockSlot(7, 0, 30), true);
+  assert.equal(clockSlot(7, 15, 30), false);
+  assert.equal(clockSlot(22, 30, 30), true);
+  assert.equal(slotsInDay(0, 24, 30), 48);
 });
 
-test("27 November 2026 in Melbourne sleeps outside 07:00–23:00 and wakes with a short tick", () => {
+test("27 November 2026 in Melbourne sleeps outside 07:00–23:00", () => {
   const morning = parts("2026-11-26T20:00:00.000Z");
   const before = parts("2026-11-26T19:30:00.000Z");
   const evening = parts("2026-11-27T11:00:00.000Z");
-  const lateFast = parts("2026-11-27T11:45:00.000Z");
+  const half = parts("2026-11-27T11:30:00.000Z");
   const asleep = parts("2026-11-27T12:00:00.000Z");
   assert.deepEqual(morning, { hour: 7, minute: 0 });
-  assert.equal(decideTick(before.hour, before.minute, "calm", 7, 23, 0, 500).action, "sleep");
-  const wake = decideTick(morning.hour, morning.minute, "calm", 7, 23, 0, 500);
+  assert.equal(decideTick(before.hour, before.minute, 30, 7, 23, 0, 500).action, "sleep");
+  const wake = decideTick(morning.hour, morning.minute, 30, 7, 23, 0, 500);
   assert.equal(wake.action, "run");
   assert.equal(wake.morning, true);
-  assert.equal(wake.slotsToday, 16);
-  assert.equal(wake.callShare, 31);
-  assert.equal(decideTick(evening.hour, evening.minute, "calm", 7, 23, 0, 500).action, "run");
-  assert.equal(decideTick(lateFast.hour, lateFast.minute, "fast", 7, 23, 0, 500).action, "run");
-  assert.equal(decideTick(asleep.hour, asleep.minute, "fast", 7, 23, 0, 500).action, "sleep");
+  assert.equal(wake.slotsToday, 32);
+  assert.equal(wake.callShare, 15);
+  assert.equal(decideTick(evening.hour, evening.minute, 30, 7, 23, 0, 500).action, "run");
+  assert.equal(decideTick(half.hour, half.minute, 30, 7, 23, 0, 500).action, "run");
+  assert.equal(decideTick(asleep.hour, asleep.minute, 30, 7, 23, 0, 500).action, "sleep");
+  const slot = currentSlotId(new Date("2026-11-27T11:30:00.000Z"));
+  assert.equal(slot, "2026-11-27 22:30");
+  assert.match(currentSlotId(new Date("2026-11-27T11:14:00.000Z")), /22:00$/);
 });
 
 test("a tick is skipped when its share of the daily call cap is zero", () => {
-  const blocked = decideTick(8, 0, "fast", 7, 23, 500, 500);
+  const blocked = decideTick(8, 0, 30, 7, 23, 500, 500);
   assert.equal(blocked.action, "skip");
-  const tightMorning = decideTick(7, 0, "fast", 7, 23, 499, 500);
+  const tightMorning = decideTick(7, 0, 30, 7, 23, 499, 500);
   assert.equal(tightMorning.action, "run");
   assert.equal(tightMorning.callShare, 1);
-  const later = decideTick(8, 0, "fast", 7, 23, 499, 500);
+  const later = decideTick(12, 0, 30, 7, 23, 499, 500);
   assert.equal(later.action, "skip");
-  assert.equal(decideTick(7, 0, "fast", 7, 23, 0, 500).callShare, 7);
-  assert.equal(decideTick(7, 0, "active", 7, 23, 0, 500).callShare, 15);
+  assert.equal(decideTick(7, 0, 30, 7, 23, 0, 500).callShare, 15);
 });
 
 test("studies, notes, and the page-read cap", async () => {

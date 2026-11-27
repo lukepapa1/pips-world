@@ -17,6 +17,7 @@ import {
   saveEvents,
   updateWorldObject,
 } from "./db.js";
+import { noteDuplicate } from "./duplicates.js";
 import { broadcast } from "./hub.js";
 import type { ToolOutcome } from "./tools.js";
 import { buildCap, buildsLeft, noteBuild } from "./usage.js";
@@ -117,6 +118,14 @@ function addObject(
 ): ToolOutcome {
   const radius = radiusOf({ type, blueprint: type });
   if (!insideWorld(x, z, type, radius)) return { result: "That spot is outside the village.", kind: null };
+  const twin = objects.find((object) => object.type === type && Math.hypot(object.x - x, object.z - z) < 1.5);
+  if (twin) {
+    noteDuplicate();
+    return {
+      result: `A ${label(type)} is already there (${twin.id}) at ${twin.x}, ${twin.z}. Move it or change it instead of placing another.`,
+      kind: null,
+    };
+  }
   if (objects.some((object) => overlaps({ x, z, type }, object, radius, radiusOf(object)))) {
     return { result: "That spot overlaps something already there.", kind: null };
   }

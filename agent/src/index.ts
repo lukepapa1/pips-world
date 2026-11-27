@@ -4,6 +4,7 @@ import { authRequired } from "./auth.js";
 import { startChatWatch, stopChatWatch } from "./chat.js";
 import { closeDatabase, databasePath, openDatabase } from "./db.js";
 import { applyOwnerTimezone } from "./clock.js";
+import { loadRuntimeConfig } from "./runtimeConfig.js";
 import { demoMode, ensureDataDirs, loadEnv, memoryDir, publishedDir, repoRoot, worldDistDir } from "./env.js";
 import { noteNewProjects, startQuietWatch, stopQuietWatch } from "./alerts.js";
 import { stopAcceptingTicks, waitForTickToFinish } from "./loop.js";
@@ -15,6 +16,7 @@ import { initTickFromDb } from "./tickState.js";
 
 loadEnv(path.join(repoRoot(), ".env"));
 applyOwnerTimezone();
+loadRuntimeConfig();
 
 if (process.env.NODE_ENV === "production" && !authRequired()) {
   console.error("OWNER_PASSWORD is missing or shorter than 8 characters. Refusing to start.");

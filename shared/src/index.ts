@@ -346,6 +346,7 @@ export type ServerMessage =
 export type ClientMessage =
   | { type: "decide_request"; requestId: string; decision: "approved" | "denied" }
   | { type: "set_paused"; paused: boolean }
+  | { type: "hide_diary"; id: string }
   | { type: "mark_diary_read" }
   | { type: "mark_digest_read"; id: string }
   | { type: "set_season_preview"; season: SeasonPreview }

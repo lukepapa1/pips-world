@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { DateTime } from "luxon";
 import type { GrowthPace, GrowthSlot, GrowthView } from "@pips/shared";
-import { isGrowthPace } from "@pips/shared";
 import { readClockConfig, type ClockConfig } from "./clock.js";
+import { nearDuplicate, noteDuplicate } from "./duplicates.js";
 import {
   activeStudyCount,
   browseQueriesSince,
@@ -10,10 +10,13 @@ import {
   getSetting,
   insertNote,
   insertStudy,
+  listCreationRows,
+  listRequests,
   listStudies,
   markNotesPrompted,
   noteTopicsSince,
   notesMatchingTopics,
+  recentNotes,
   saveStudy,
   searchNoteRows,
   setSetting,
@@ -23,6 +26,7 @@ import {
   type StudyRow,
 } from "./db.js";
 import { broadcast } from "./hub.js";
+import { runtimeConfig, tickCron } from "./runtimeConfig.js";
 import { callsToday, caps, readCap, searchCap } from "./usage.js";
 import type { ToolOutcome } from "./tools.js";
 
@@ -32,62 +36,46 @@ export type TickDecision = {
   callShare: number;
   slotsLeft: number;
   slotsToday: number;
-  pace: GrowthPace;
+  interval: number;
   awakeStart: number;
   awakeEnd: number;
 };
 
 const DAY_KEY = "growth_days";
 
-export function intervalMinutes(pace: GrowthPace): number {
-  if (pace === "fast") return 15;
-  if (pace === "active") return 30;
-  return 60;
+export function tickInterval(): number {
+  return runtimeConfig().tickIntervalMinutes;
 }
 
-export function paceCron(pace: GrowthPace): string {
-  if (pace === "fast") return "*/15 * * * *";
-  if (pace === "active") return "0,30 * * * *";
-  return "0 * * * *";
-}
-
-export function readPace(): GrowthPace {
-  const stored = getSetting("growth_pace");
-  return isGrowthPace(stored) ? stored : "calm";
+export function paceCron(): string {
+  return tickCron(tickInterval());
 }
 
 export function readAwake(): { start: number; end: number } {
-  return { start: hourSetting(getSetting("awake_start"), 7), end: hourSetting(getSetting("awake_end"), 23) };
+  const config = runtimeConfig();
+  return { start: config.awakeStart, end: config.awakeEnd };
 }
 
-function hourSetting(raw: string | null, fallback: number): number {
-  if (raw === null) return fallback;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 23) return fallback;
-  return parsed;
-}
-
-export function slotsInDay(start: number, end: number, pace: GrowthPace): number {
-  if (end <= start) return 0;
-  return ((end - start) * 60) / intervalMinutes(pace);
+export function slotsInDay(start: number, end: number, interval = tickInterval()): number {
+  if (end <= start || interval <= 0) return 0;
+  return ((end - start) * 60) / interval;
 }
 
 export function decideTick(
   hour: number,
   minute: number,
-  pace: GrowthPace,
+  interval: number,
   start: number,
   end: number,
   callsUsed: number,
   callCap: number,
 ): TickDecision {
-  const slotsToday = slotsInDay(start, end, pace);
-  const interval = intervalMinutes(pace);
+  const slotsToday = slotsInDay(start, end, interval);
   const asleep = hour < start || hour >= end;
   const morning = hour === start && minute < interval;
   const base = {
     morning,
-    pace,
+    interval,
     awakeStart: start,
     awakeEnd: end,
     slotsToday,
@@ -104,8 +92,7 @@ export function decideTick(
   return { ...base, action: "run", slotsLeft, callShare };
 }
 
-export function daySlots(start: number, end: number, pace: GrowthPace): GrowthSlot[] {
-  const interval = intervalMinutes(pace);
+export function daySlots(start: number, end: number, interval = tickInterval()): GrowthSlot[] {
   const slots: GrowthSlot[] = [];
   for (let minute = start * 60; minute < end * 60; minute += interval) {
     const hour = Math.floor(minute / 60);
@@ -118,19 +105,31 @@ export function daySlots(start: number, end: number, pace: GrowthPace): GrowthSl
   return slots;
 }
 
+export function clockSlot(hour: number, minute: number, interval = tickInterval()): boolean {
+  return minute % interval === 0;
+}
+
 export function describeDecision(decision: TickDecision, callsUsed: number, callCap: number): string {
-  const window = `${pad(decision.awakeStart)}:00–${pad(decision.awakeEnd)}:00`;
-  const pace = `${decision.pace}, every ${intervalMinutes(decision.pace)} min, awake ${window}`;
-  if (decision.action === "sleep") return `Pace ${pace}. Pip is asleep. Calls ${callsUsed}/${callCap}.`;
+  const window = `${pad(decision.awakeStart)}:00–${decision.awakeEnd === 24 ? "24:00" : `${pad(decision.awakeEnd)}:00`}`;
+  const pace = `every ${decision.interval} min, awake ${window}`;
+  if (decision.action === "sleep") return `Schedule ${pace}. Pip is asleep. Calls ${callsUsed}/${callCap}.`;
   if (decision.action === "skip") {
-    return `Pace ${pace}. Skipping this tick so the day stays within ${callCap} model calls. Calls ${callsUsed}/${callCap}.`;
+    return `Schedule ${pace}. Skipping this tick so the day stays within ${callCap} model calls. Calls ${callsUsed}/${callCap}.`;
   }
-  const kind = decision.morning ? " Short morning tick." : "";
-  return `Pace ${pace}. Calls ${callsUsed}/${callCap}. This tick may use ${decision.callShare}. Slots left ${decision.slotsLeft} of ${decision.slotsToday}.${kind}`;
+  return `Schedule ${pace}. Calls ${callsUsed}/${callCap}. This tick may use ${decision.callShare}. Slots left ${decision.slotsLeft} of ${decision.slotsToday}.`;
 }
 
 function pad(hour: number): string {
   return String(hour).padStart(2, "0");
+}
+
+export function currentSlotId(instant = new Date()): string {
+  const config = readClockConfig();
+  const interval = tickInterval();
+  let dt = DateTime.fromJSDate(instant, { zone: config.zone });
+  const minute = Math.floor(dt.minute / interval) * interval;
+  dt = dt.set({ minute, second: 0, millisecond: 0 });
+  return `${dt.toFormat("yyyy-MM-dd")} ${dt.toFormat("HH:mm")}`;
 }
 
 export function currentDecision(instant = new Date()): TickDecision {
@@ -138,29 +137,19 @@ export function currentDecision(instant = new Date()): TickDecision {
   const dt = DateTime.fromJSDate(instant, { zone: config.zone });
   const awake = readAwake();
   const limits = caps();
-  return decideTick(dt.hour, dt.minute, readPace(), awake.start, awake.end, callsToday(), limits.calls);
+  return decideTick(dt.hour, dt.minute, tickInterval(), awake.start, awake.end, callsToday(), limits.calls);
 }
 
-export function setPace(pace: GrowthPace): void {
-  setSetting("growth_pace", pace);
+export function setPace(_pace: GrowthPace): void {
   publishGrowth();
 }
 
-export function setAwakeHours(start: number, end: number): string | null {
-  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > 23 || end <= start) {
-    return "Awake hours need a start before the end, from 0 to 23.";
-  }
-  setSetting("awake_start", String(start));
-  setSetting("awake_end", String(end));
-  publishGrowth();
-  return null;
+export function setAwakeHours(_start: number, _end: number): string | null {
+  return "Awake hours are read from the environment at startup.";
 }
 
-export function setReadCap(cap: number): string | null {
-  if (!Number.isInteger(cap) || cap < 0 || cap > 2000) return "Page reads must be a whole number from 0 to 2000.";
-  setSetting("daily_read_cap", String(cap));
-  publishGrowth();
-  return null;
+export function setReadCap(_cap: number): string | null {
+  return "The page-read cap is read from the environment at startup.";
 }
 
 type DayLog = {
@@ -179,13 +168,13 @@ export function noteGrowthDay(action: TickDecision["action"], instant = new Date
   const logs = readLogs();
   const current = logs.find((row) => row.date === date) ?? {
     date,
-    pace: readPace(),
+    pace: "active",
     calls: 0,
     cap: limits.calls,
     ticks: 0,
     skipped: 0,
   };
-  current.pace = readPace();
+  current.pace = "active";
   current.calls = callsToday();
   current.cap = limits.calls;
   if (action === "run") current.ticks += 1;
@@ -226,6 +215,14 @@ export function startStudy(topic: unknown, why: unknown, planned: unknown): Tool
     return { result: "planned_ticks must be a whole number from 1 to 12.", kind: null };
   }
   if (activeStudyCount() >= 2) return { result: "Two studies are already open. End one before starting another.", kind: null };
+  const same = listStudies().find((study) => nearDuplicate(study.topic, name));
+  if (same) {
+    noteDuplicate();
+    return {
+      result: `Study ${same.id} already covers ${same.topic} (${same.status}). Continue it or end it instead of starting another.`,
+      kind: null,
+    };
+  }
   const now = new Date().toISOString();
   const row: StudyRow = {
     id: randomUUID().slice(0, 8),
@@ -288,6 +285,14 @@ export function saveNote(topic: unknown, text: unknown, sources: unknown): ToolO
   const body = clean(text, 2000);
   if (!name) return { result: "A note needs a topic.", kind: null };
   if (!body) return { result: "A note needs text.", kind: null };
+  const same = recentNotes(40).find((note) => nearDuplicate(note.topic, name) || nearDuplicate(note.body, body));
+  if (same) {
+    noteDuplicate();
+    return {
+      result: `Note ${same.id} already says this under ${same.topic}: ${clip(same.body, 400)}. Extend that note instead of saving another.`,
+      kind: null,
+    };
+  }
   const sourceText = sourcesText(sources);
   const now = new Date().toISOString();
   insertNote({
@@ -334,13 +339,18 @@ function clean(value: unknown, max: number): string {
 export function growthContext(morning: boolean): string {
   const studies = listStudies().filter((study) => study.status === "active");
   const lines: string[] = [];
-  if (morning) lines.push("This is the short morning tick. You just woke. Keep it brief.");
   const decision = currentDecision();
   lines.push(
     `Model calls used today: ${callsToday()} of ${caps().calls}. A tick that would pass the day's cap is skipped.`,
   );
+  lines.push(`A study tick is about ${tickInterval()} minutes.`);
+  const waiting = waitingLines();
+  if (waiting.length > 0) {
+    lines.push("Unfinished or waiting:");
+    lines.push(...waiting);
+  }
   if (studies.length === 0) {
-    lines.push("No study is open. You can start one on a topic you choose.");
+    lines.push("No study is open.");
   } else {
     lines.push("Open studies. Suggested next step: continue from what you already learned, or end the study. The next step is yours.");
     for (const study of studies) {
@@ -366,6 +376,23 @@ export function growthContext(morning: boolean): string {
     lines.push("Go deeper on one of these, or try something you have not touched. Do not repeat a skim of the same topic.");
   }
   return lines.join("\n");
+}
+
+function waitingLines(): string[] {
+  const lines: string[] = [];
+  for (const study of listStudies().filter((row) => row.status === "active")) {
+    lines.push(`- Study ${study.id}: ${study.topic}. ${study.ticksDone} of ${study.plannedTicks} ticks noted.`);
+  }
+  for (const creation of listCreationRows().filter((row) => row.status === "draft" && !row.archived)) {
+    lines.push(`- Draft creation ${creation.id}: ${creation.title}.`);
+  }
+  for (const request of listRequests()) {
+    if (request.status === "pending") lines.push(`- Wish waiting: ${request.title}.`);
+    if (request.status === "approved" && /^(expansion|mechanic):/i.test(request.title)) {
+      lines.push(`- Approved and waiting: ${request.title}.`);
+    }
+  }
+  return lines;
 }
 
 function noteLine(note: NoteRow): string {
@@ -419,7 +446,7 @@ function recentWindow(since: string): string[] {
 
 export function growthView(instant = new Date()): GrowthView {
   const awake = readAwake();
-  const pace = readPace();
+  const interval = tickInterval();
   const decision = currentDecision(instant);
   const limits = caps();
   const plans = listStudies()
@@ -433,10 +460,10 @@ export function growthView(instant = new Date()): GrowthView {
       notes: clip(study.notes, 240),
     }));
   return {
-    pace,
+    pace: interval === 60 ? "calm" : interval <= 15 ? "fast" : "active",
     awakeStart: awake.start,
     awakeEnd: awake.end,
-    intervalMinutes: intervalMinutes(pace),
+    intervalMinutes: interval,
     callsUsed: callsToday(),
     callCap: limits.calls,
     callShare: decision.callShare,
@@ -450,7 +477,7 @@ export function growthView(instant = new Date()): GrowthView {
     notesCount: countNotes(),
     topicsThisWeek: weekTopics(),
     plans,
-    slots: daySlots(awake.start, awake.end, pace),
+    slots: daySlots(awake.start, awake.end, interval),
     reflectModel: process.env.LLM_MODEL_REFLECT?.trim() || process.env.LLM_MODEL || "",
     tickModel: process.env.LLM_MODEL ?? "",
   };
@@ -485,5 +512,5 @@ export function publishGrowth(): void {
 
 export function startupLine(): string {
   const view = growthView();
-  return `Growth pace ${view.pace}. Awake ${pad(view.awakeStart)}:00–${pad(view.awakeEnd)}:00, ${view.slotsToday} slots, every ${view.intervalMinutes} min. Calls ${view.callsUsed}/${view.callCap}. Page reads ${view.readCap} a day. Searches ${view.searchCap} a day. Tick model ${view.tickModel}. Reflect model ${view.reflectModel}.`;
+  return `Ticks every ${view.intervalMinutes} min at the clock. Awake ${pad(view.awakeStart)}:00–${view.awakeEnd === 24 ? "24:00" : `${pad(view.awakeEnd)}:00`}, ${view.slotsToday} slots. Calls ${view.callsUsed}/${view.callCap}. Page reads ${view.readCap} a day. Searches ${view.searchCap} a day. Tick model ${view.tickModel}. Reflect model ${view.reflectModel}.`;
 }

@@ -92,7 +92,9 @@ test("publishing, approval, and rollback keep one live version", async () => {
     assert.ok(objects.length > 0);
     assert.equal(objects[0]?.blueprint, "tree");
 
-    blueprints.setApproval(true);
+    process.env.BLUEPRINT_APPROVAL = "1";
+    const { loadRuntimeConfig } = await import("./runtimeConfig.js");
+    loadRuntimeConfig();
     const waiting = blueprints.designBlueprint("tree", { ...seeded?.spec, parameters: { height: 1.2, canopy_layers: 1 } }, 1);
     assert.match(waiting.result, /waiting/);
     assert.equal(db.liveBlueprint("tree")?.version, 1);
@@ -113,5 +115,8 @@ test("publishing, approval, and rollback keep one live version", async () => {
     db.closeDatabase();
     fs.rmSync(dir, { recursive: true, force: true });
     delete process.env.DATA_DIR;
+    delete process.env.BLUEPRINT_APPROVAL;
+    const { loadRuntimeConfig: restoreConfig } = await import("./runtimeConfig.js");
+    restoreConfig();
   }
 });

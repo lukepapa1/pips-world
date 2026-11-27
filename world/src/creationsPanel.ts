@@ -33,15 +33,6 @@ export function creationsMarkup(state: ClientState, filters: CreationFilters, se
   const head = `
     <p>Studio and gallery. ${mb(library.usedBytes)} / ${mb(library.budgetBytes)} MB used. One creation can be up to ${mb(library.maxCreationBytes)} MB. Nothing here is deleted.</p>
     ${warning}
-    <form data-creations="budget">
-      <label>Storage budget MB <input name="megabytes" type="number" min="64" max="20000" value="${Math.round(library.budgetBytes / (1024 * 1024))}"></label>
-      <button type="submit">Save</button>
-    </form>
-    <form data-creations="max">
-      <label>Largest creation MB <input name="megabytes" type="number" min="1" max="512" value="${Math.round(library.maxCreationBytes / (1024 * 1024))}"></label>
-      <button type="submit">Save</button>
-    </form>
-    <label class="switch"><input type="checkbox" data-public ${library.publicEnabled ? "checked" : ""}> Public page of creations I mark public</label>
   `;
   const selected = library.items.find((item) => item.id === selectedId) ?? null;
   if (selected) return head + detail(state, selected);

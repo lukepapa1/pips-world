@@ -69,7 +69,7 @@ export async function runMiniReflection(): Promise<void> {
       ["Today's diary:", diary || "No diary entries yet today.", "", "Interests file:", memorySnapshot("interests.md")].join("\n"),
       reflectModel(),
     );
-    const flags: ToolFlags = { wroteDiary: false, wroteJournal: false, webCalls: 0 };
+    const flags: ToolFlags = { wroteDiary: false, wroteJournal: false, webCalls: 0, diaryAsked: false };
     const turn = await chat.turn(tools, spend(), undefined, 500);
     const tick = Math.max(maxTick(), 1);
     for (const call of turn.calls) await executeTool(call.name, call.args, tick, flags);
@@ -115,7 +115,7 @@ export async function runWeeklyReflection(): Promise<void> {
       ].join("\n"),
       reflectModel(),
     );
-    const flags: ToolFlags = { wroteDiary: false, wroteJournal: false, webCalls: 0 };
+    const flags: ToolFlags = { wroteDiary: false, wroteJournal: false, webCalls: 0, diaryAsked: false };
     const turn = await chat.turn(tools, spend(), undefined, 800);
     const tick = Math.max(maxTick(), 1);
     for (const call of turn.calls) await executeTool(call.name, call.args, tick, flags);

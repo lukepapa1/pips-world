@@ -9,10 +9,8 @@ export function pendingBlueprintCount(state: ClientState): number {
 }
 
 export function blueprintMarkup(state: ClientState): string {
-  const checked = state.blueprintApproval ? "checked" : "";
-  const approval = `<label class="approval"><input type="checkbox" data-approval="required" ${checked} /> Require approval before a new version goes live</label>`;
   const names = [...new Set(state.blueprints.map((record) => record.name))].sort();
-  if (names.length === 0) return `${approval}<div class="empty-state"><h3>No blueprints yet.</h3><p>Versions Pip designs will show up here.</p></div>`;
+  if (names.length === 0) return `<div class="empty-state"><h3>No blueprints yet.</h3><p>Versions Pip designs will show up here.</p></div>`;
   const groups = names
     .map((name) => {
       const versions = state.blueprints
@@ -34,5 +32,5 @@ export function blueprintMarkup(state: ClientState): string {
       return `<section class="blueprint-name"><h3>${esc(name)}</h3><ul>${rows}</ul></section>`;
     })
     .join("");
-  return `${approval}${groups}`;
+  return groups;
 }

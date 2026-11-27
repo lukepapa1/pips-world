@@ -415,7 +415,13 @@ select, input[type="number"], input[type="password"] {
 
 .row-actions button { background: var(--moss); color: var(--moss-ink); border-color: transparent; }
 .row-actions .ghost { background: var(--paper-raised); color: var(--ink); border-color: var(--line); }
-.row-actions .danger, #pause[aria-pressed="true"] { background: var(--clay); color: var(--clay-ink); border-color: transparent; }
+.row-actions .danger, #pause.emergency, #pause[aria-pressed="true"] {
+  background: var(--clay);
+  color: var(--clay-ink);
+  border-color: transparent;
+  min-height: 44px;
+  font-weight: 700;
+}
 
 .switch { min-height: 44px; gap: 12px; }
 .switch input {

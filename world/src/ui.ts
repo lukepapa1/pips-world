@@ -1,6 +1,5 @@
 import {
   BUILDING_NAMES,
-  hourFromTick,
   isSeason,
   type ClientMessage,
   type DiaryRow,
@@ -15,7 +14,7 @@ import { creationsMarkup, type CreationFilters } from "./creationsPanel";
 import { bindInboxSwipe, inboxCount, inboxMarkup } from "./inboxPanel";
 import { connect } from "./socket";
 import type { OverviewData, OverviewTab, OverviewUi } from "./overviewPanel";
-import { eventClass, eventHour, eventLabel, eventText } from "./describe";
+import { eventClass, eventLabel, eventText } from "./describe";
 import { mountAlerts } from "./alerts";
 import {
   getState,
@@ -65,6 +64,8 @@ function formatWhen(iso: string): { time: string; title: string } {
   }
 }
 
+let diaryZone = "";
+
 const SEASON_ICON: Record<Season, string> = {
   spring: "🌸",
   summer: "☀",
@@ -83,27 +84,28 @@ function setCount(element: HTMLElement, count: number): void {
 
 function diaryMarkup(entries: DiaryRow[]): string {
   if (entries.length === 0) {
-    return `<div class="empty-state"><h3>The diary is blank.</h3><p>Pip writes a note at the end of each hour. It will show up here.</p></div>`;
+    return `<div class="empty-state"><h3>The diary is blank.</h3><p>Pip writes a note at the end of each tick. It will show up here.</p></div>`;
   }
   const sorted = [...entries].sort(
-    (a, b) => b.day - a.day || b.tick - a.tick || b.createdAt.localeCompare(a.createdAt),
+    (a, b) => b.createdAt.localeCompare(a.createdAt) || b.tick - a.tick,
   );
-  const groups = new Map<number, DiaryRow[]>();
+  const groups = new Map<string, DiaryRow[]>();
   for (const entry of sorted) {
-    const list = groups.get(entry.day);
+    const label = villageDayLabel(entry.createdAt);
+    const list = groups.get(label);
     if (list) list.push(entry);
-    else groups.set(entry.day, [entry]);
+    else groups.set(label, [entry]);
   }
   let html = "";
   for (const [day, list] of groups) {
-    html += `<section class="day"><h3>Day ${day}</h3>`;
+    html += `<section class="day"><h3>${esc(day)}</h3>`;
     for (const entry of list) {
-      const hour = hourFromTick(entry.tick);
       const when = formatWhen(entry.createdAt);
       html += `<article class="entry${entry.readAt ? "" : " unread"}">
         <header>
-          <span>${hour > 0 ? `Hour ${hour}` : "Note"}${when.time ? ` · ${esc(when.time)}` : ""}</span>
+          <span>${esc(when.time || "Note")}</span>
           ${entry.readAt ? "" : `<span class="new">New</span>`}
+          <button type="button" data-hide-diary="${esc(entry.id)}">Hide</button>
         </header>
         <p>${esc(entry.body)}</p>
       </article>`;
@@ -111,6 +113,21 @@ function diaryMarkup(entries: DiaryRow[]): string {
     html += `</section>`;
   }
   return html;
+}
+
+function villageDayLabel(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Unknown day";
+  try {
+    return date.toLocaleDateString("en-AU", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      timeZone: diaryZone || undefined,
+    });
+  } catch {
+    return date.toDateString();
+  }
 }
 
 function requestMarkup(requests: RequestRow[]): string {
@@ -188,14 +205,12 @@ function feedMarkup(state: ClientState): string {
   for (const event of events) {
     if (event.day !== day) {
       day = event.day;
-      html += `<p class="feed-day">Day ${day}</p>`;
+      html += `<p class="feed-day">${esc(villageDayLabel(event.createdAt))}</p>`;
     }
-    const hour = eventHour(event);
     const when = formatWhen(event.createdAt);
     html += `<article class="feed-item ${eventClass(event)}">
       <header>
         <span class="chip">${esc(eventLabel(event))}</span>
-        ${hour > 0 ? `<span class="hour">Hour ${hour}</span>` : ""}
         <time datetime="${esc(event.createdAt)}" title="${esc(when.title)}">${esc(when.time)}</time>
       </header>
       <p>${esc(eventText(event))}</p>
@@ -274,7 +289,6 @@ export function createUI(
   const openBlueprintsButton = must<HTMLButtonElement>("open-blueprints");
   const growth = must<HTMLElement>("growth");
   const growthBody = must<HTMLElement>("growth-body");
-  const openGrowthButton = must<HTMLButtonElement>("open-growth");
   const creations = must<HTMLElement>("creations");
   const creationsBody = must<HTMLElement>("creations-body");
   const openCreationsButton = must<HTMLButtonElement>("open-creations");
@@ -292,14 +306,8 @@ export function createUI(
   const hudBadge = must<HTMLElement>("hud-badge");
   const retry = must<HTMLButtonElement>("retry");
   const connectionError = must<HTMLElement>("connection-error");
-  const settingsSearch = must<HTMLInputElement>("settings-search");
-  const pauseSwitch = must<HTMLButtonElement>("pause-switch");
-  const approvalSwitch = must<HTMLInputElement>("approval-switch");
-  const publicSwitch = must<HTMLInputElement>("public-switch");
-  const storageForm = must<HTMLFormElement>("storage-form");
-  const maxForm = must<HTMLFormElement>("max-form");
+  const statusBody = must<HTMLElement>("status-body");
   document.getElementById("growth-mount")?.append(growth);
-  const openAlertsButton = must<HTMLButtonElement>("open-alerts");
   const seasonIcon = must<HTMLElement>("season-icon");
   const seasonLabel = must<HTMLElement>("season-label");
   const villageClock = must<HTMLElement>("village-clock");
@@ -435,6 +443,24 @@ export function createUI(
   let selectedDay = 0;
   let bootShown = false;
   const revealed = new Set<string>();
+
+  function loadStatus(): void {
+    statusBody.innerHTML = `<p>Loading status…</p>`;
+    fetch("/api/status")
+      .then(async (response) => {
+        if (response.status === 401) {
+          location.href = "/login";
+          return;
+        }
+        if (!response.ok) throw new Error("status");
+        const body = (await response.json()) as { lines?: unknown };
+        const lines = Array.isArray(body.lines) ? body.lines.filter((line): line is string => typeof line === "string") : [];
+        statusBody.innerHTML = lines.map((line) => `<p>${esc(line)}</p>`).join("") || `<p>Status is empty.</p>`;
+      })
+      .catch(() => {
+        statusBody.innerHTML = `<p>Status could not be loaded.</p>`;
+      });
+  }
 
   function showToast(text: string): void {
     toast.hidden = false;
@@ -647,7 +673,6 @@ export function createUI(
         clockText.textContent = sawConnection ? "Pip is reconnecting…" : "Pip is connecting…";
       } else {
         sawConnection = true;
-        const hour = hourFromTick(state.tick);
         const place = state.pipAt ? BUILDING_NAMES[state.pipAt] : "between places";
         const draft = state.creations?.items.find((item) => item.status === "draft" && !item.archived);
         clockText.textContent = state.paused
@@ -657,10 +682,11 @@ export function createUI(
             : draft
               ? `Pip is making ${draft.title}`
               : `Pip is at the ${place}`;
-        if (hour > 0) pipSheetSub.textContent = `Day ${state.day} · Hour ${hour}`;
+        if (state.world) pipSheetSub.textContent = `${state.world.date} · ${state.world.time}`;
       }
       connectionError.hidden = state.connected || !sawConnection;
       villageZone = state.connected ? (state.world?.zone ?? "") : "";
+      diaryZone = villageZone;
       villageZoneName = state.connected ? (state.world?.zoneName ?? "") : "";
       paintVillageClock();
       presence.classList.toggle("on", state.connected);
@@ -679,22 +705,8 @@ export function createUI(
       diarySub.textContent =
         unread > 0 ? `${unread} unread · newest first` : "Newest first, grouped by day";
       mailSub.textContent = needing > 0 ? `${needing} need you` : "Nothing needs you";
-      pause.textContent = state.paused ? "Resume" : "Pause";
+      pause.textContent = state.paused ? "PAUSED" : "Emergency pause";
       pause.setAttribute("aria-pressed", String(state.paused));
-      pauseSwitch.textContent = state.paused ? "On" : "Off";
-      pauseSwitch.setAttribute("aria-pressed", String(state.paused));
-      approvalSwitch.checked = state.blueprintApproval;
-      if (state.creations) {
-        publicSwitch.checked = state.creations.publicEnabled;
-        const budget = storageForm.elements.namedItem("megabytes");
-        const max = maxForm.elements.namedItem("megabytes");
-        if (budget instanceof HTMLInputElement && document.activeElement !== budget) {
-          budget.value = String(Math.round(state.creations.budgetBytes / (1024 * 1024)));
-        }
-        if (max instanceof HTMLInputElement && document.activeElement !== max) {
-          max.value = String(Math.round(state.creations.maxCreationBytes / (1024 * 1024)));
-        }
-      }
       if (state.world?.season) document.body.dataset.season = state.world.season;
       pause.disabled = !state.connected;
       banner.hidden = !state.paused;
@@ -898,28 +910,6 @@ export function createUI(
     ui.sync(getState());
     blueprints.querySelector<HTMLElement>(".close")?.focus();
   });
-  openGrowthButton.addEventListener("click", () => {
-    if (!growth.hidden) {
-      growth.hidden = true;
-    creations.hidden = true;
-    overview.hidden = true;
-      refreshScrim();
-      return;
-    }
-    diary.hidden = true;
-    mailbox.hidden = true;
-    chat.hidden = true;
-    blueprints.hidden = true;
-    creations.hidden = true;
-    overview.hidden = true;
-    alerts.close();
-    hideDigest();
-    growth.hidden = false;
-    refreshScrim();
-    showChatFace();
-    ui.sync(getState());
-    growth.querySelector<HTMLElement>(".close")?.focus();
-  });
   openOverviewButton.addEventListener("click", () => ui.openOverview());
   overviewBody.addEventListener("click", (event) => {
     const control = (event.target as HTMLElement).closest<HTMLElement>("[data-overview-tab], [data-overview-page], [data-blueprint], [data-making], [data-rollback], [data-open-creation]");
@@ -970,26 +960,16 @@ export function createUI(
     showTab("creations");
     renderCreations();
   });
-  openAlertsButton.addEventListener("click", () => {
-    if (alerts.isOpen()) {
-      alerts.close();
-      refreshScrim();
-      return;
-    }
-    diary.hidden = true;
-    mailbox.hidden = true;
-    blueprints.hidden = true;
-    growth.hidden = true;
-    creations.hidden = true;
-    overview.hidden = true;
-    chat.hidden = true;
-    hideDigest();
-    alerts.open();
-    refreshScrim();
-  });
   pause.addEventListener("click", () => {
     const next = !getState().paused;
     if (!send({ type: "set_paused", paused: next })) showToast("Not connected.");
+  });
+  diaryBody.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const id = target.closest<HTMLElement>("[data-hide-diary]")?.dataset.hideDiary;
+    if (!id) return;
+    if (!send({ type: "hide_diary", id })) showToast("Not connected.");
   });
   logout.addEventListener("click", () => {
     fetch("/logout", { method: "POST" }).finally(() => {
@@ -1147,33 +1127,9 @@ export function createUI(
     digest.hidden = true;
     settings.hidden = false;
     refreshScrim();
-    settingsSearch.focus();
+    loadStatus();
   });
   retry.addEventListener("click", () => connect());
-  pauseSwitch.addEventListener("click", () => pause.click());
-  settingsSearch.addEventListener("input", () => {
-    const query = settingsSearch.value.trim().toLowerCase();
-    for (const group of settings.querySelectorAll<HTMLElement>(".setting-group")) {
-      const blob = `${group.dataset.keywords ?? ""} ${group.textContent ?? ""}`.toLowerCase();
-      group.hidden = query.length > 0 && !blob.includes(query);
-    }
-  });
-  approvalSwitch.addEventListener("change", () => {
-    if (!send({ type: "set_blueprint_approval", required: approvalSwitch.checked })) showToast("Not connected.");
-  });
-  publicSwitch.addEventListener("change", () => {
-    if (!send({ type: "set_creations_public", enabled: publicSwitch.checked })) showToast("Not connected.");
-  });
-  storageForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const megabytes = Number(new FormData(storageForm).get("megabytes"));
-    if (!send({ type: "set_storage_budget", megabytes })) showToast("Not connected.");
-  });
-  maxForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const megabytes = Number(new FormData(maxForm).get("megabytes"));
-    if (!send({ type: "set_creation_max", megabytes })) showToast("Not connected.");
-  });
   pipSheet.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;

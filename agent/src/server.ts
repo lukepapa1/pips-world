@@ -21,6 +21,7 @@ import { lastTickAt } from "./db.js";
 import { redactSecrets, worldDistDir } from "./env.js";
 import {
   decideRequest,
+  hideDiary,
   isPaused,
   listDiary,
   listDigests,
@@ -38,6 +39,7 @@ import { chatEnabled, chatHistory, replyToChat } from "./chat.js";
 import { demoMode } from "./env.js";
 import { addSocket, broadcast, removeSocket } from "./hub.js";
 import { generateDailyDigest, resolveDigestDay } from "./digest.js";
+import { statusLines } from "./status.js";
 import { handlePush } from "./push.js";
 import { tickInProgress, runAgentTick } from "./loop.js";
 import { currentWorldState, setSeasonPreview } from "./season.js";
@@ -116,6 +118,9 @@ function parseClientMessage(raw: string): ClientMessage | null {
     enabled?: unknown;
     megabytes?: unknown;
   };
+  if (message.type === "hide_diary" && typeof message.id === "string" && message.id.trim()) {
+    return { type: "hide_diary", id: message.id };
+  }
   if (message.type === "mark_diary_read") return { type: "mark_diary_read" };
   if (message.type === "mark_digest_read" && typeof message.id === "string" && message.id.trim()) {
     return { type: "mark_digest_read", id: message.id };
@@ -429,6 +434,10 @@ export function startServer(): http.Server {
       sendJson(res, 200, overviewPayload(pathname === "/api/overview"));
       return;
     }
+    if (req.method === "GET" && pathname === "/api/status") {
+      sendJson(res, 200, { lines: statusLines() });
+      return;
+    }
     if (req.method === "GET" && pathname === "/api/health") {
       const snap = snapshot();
       res.writeHead(200, { "content-type": "application/json" });
@@ -582,6 +591,12 @@ export function startServer(): http.Server {
       const message = parseClientMessage(textOf(data));
       if (!message) return;
 
+      if (message.type === "hide_diary") {
+        hideDiary(message.id);
+        broadcast(snapshot());
+        return;
+      }
+
       if (message.type === "mark_diary_read") {
         const readAt = markAllDiaryRead();
         if (readAt) broadcast({ type: "diary_read", readAt });
@@ -600,24 +615,15 @@ export function startServer(): http.Server {
       }
 
       const tick = Math.max(currentTick(), maxTick());
-      if (message.type === "set_blueprint_approval") {
-        setApproval(message.required);
-        return;
-      }
-      if (message.type === "set_growth_pace") {
-        setPace(message.pace);
-        rescheduleTick();
-        return;
-      }
-      if (message.type === "set_awake_hours") {
-        const error = setAwakeHours(message.start, message.end);
-        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
-        else rescheduleTick();
-        return;
-      }
-      if (message.type === "set_read_cap") {
-        const error = setReadCap(message.cap);
-        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
+      if (
+        message.type === "set_blueprint_approval" ||
+        message.type === "set_growth_pace" ||
+        message.type === "set_awake_hours" ||
+        message.type === "set_read_cap" ||
+        message.type === "set_creations_public" ||
+        message.type === "set_storage_budget" ||
+        message.type === "set_creation_max"
+      ) {
         return;
       }
       if (message.type === "archive_creation") {
@@ -633,18 +639,6 @@ export function startServer(): http.Server {
       if (message.type === "publish_creation" || message.type === "unpublish_creation") {
         const error =
           message.type === "publish_creation" ? publishCreation(message.id) : unpublishCreation(message.id);
-        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
-        return;
-      }
-      if (message.type === "set_creations_public") {
-        setPublicCreations(message.enabled);
-        return;
-      }
-      if (message.type === "set_storage_budget" || message.type === "set_creation_max") {
-        const error =
-          message.type === "set_storage_budget"
-            ? setStorageBudgetMb(message.megabytes)
-            : setCreationMaxMb(message.megabytes);
         if (error) socket.send(JSON.stringify({ type: "error", message: error }));
         return;
       }

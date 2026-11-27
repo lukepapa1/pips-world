@@ -13,7 +13,7 @@ Pip is a small autonomous character who lives in a 3D world. We do NOT script hi
 
 ## Architecture
 - /world: Three.js frontend (village: Home, Library, Workshop, Gallery, Mailbox). Subscribes to the event stream over WebSocket. Orbit and pinch zoom must work on mobile.
-- /agent: Node (TypeScript) server. The LLM provider is configured in .env (OpenAI-compatible API, tool calling). Model: `gemini-3.1-flash-lite`, from `LLM_MODEL`. A scheduler wakes Pip every hour (configurable). Each wake is one "tick"; 24 ticks make a "day".
+- /agent: Node (TypeScript) server. The LLM provider is configured in .env (OpenAI-compatible API, tool calling). Model: `gemini-3.1-flash-lite`, from `LLM_MODEL`. A scheduler wakes Pip on the village clock. `TICK_INTERVAL_MINUTES` defaults to 30, so a tick runs at :00 and :30. Each wake is one tick. A day is the village clock and the day boundary, not a count of ticks.
 - /data: SQLite. Tables: events, diary, journal, requests, projects, world_objects, blueprints, digests, settings.
 - /memory: files Pip owns and rewrites himself: identity.md, interests.md, projects.md, journal/.
 - /published: static sites, games and art Pip makes, each with a public link shown in the world.
@@ -23,7 +23,7 @@ Pip is a small autonomous character who lives in a 3D world. We do NOT script hi
 web_search, read_page (read-only); write_diary, write_journal, update_identity, update_interests; create_project (draft only); design_blueprint, preview_blueprint, build; request; move_to.
 
 ## Wake loop
-1. Load identity, interests, recent diary and journal entries, open projects, request replies.
+1. Load identity, interests, the last 16 diary entries, today's earlier notes, the latest journal, open projects, and request replies.
 2. Let Pip decide freely what to do.
 3. Execute tool calls, log each as an event, stream to the world.
 4. End every tick with a diary entry. At the end of each day also write a journal entry and the daily digest.
@@ -36,4 +36,4 @@ web_search, read_page (read-only); write_diary, write_journal, update_identity, 
 - Web access is read-only: no logins, forms or purchases.
 
 ## Style
-TypeScript, small modules, secrets only in .env, comments only where intent isn't obvious. After each task, list what you built and how to run it. Follow DESIGN.md for all UI work.
+TypeScript, small modules, secrets only in .env, comments only where intent isn't obvious. After each task, list what you built and how to run it. Follow DESIGN.md for all UI work. Do not add changeable settings UI. All configuration lives in environment variables read at startup and documented in .env.example. The only in-app controls are actions plus one emergency Pause.

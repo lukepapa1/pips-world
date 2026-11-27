@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { hourFromTick, type DigestItem, type DigestRow, type DigestSections, type WorldEvent } from "@pips/shared";
+import type { DigestItem, DigestRow, DigestSections, WorldEvent } from "@pips/shared";
 import { readClockConfig, shouldSendDigest } from "./clock.js";
 import {
   diaryForDay,
@@ -97,7 +97,7 @@ function eventLine(event: WorldEvent): string | null {
 
 function sourceNotes(day: number): string {
   const diary = diaryForDay(day)
-    .map((entry) => `Hour ${hourFromTick(entry.tick)}: ${entry.body}`)
+    .map((entry) => entry.body)
     .join("\n\n");
   const journal = journalForDay(day);
   const events = eventsForDay(day)

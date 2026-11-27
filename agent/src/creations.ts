@@ -12,6 +12,8 @@ import {
   type CreationsLibrary,
   type WorldEvent,
 } from "@pips/shared";
+import { nearDuplicate, noteDuplicate } from "./duplicates.js";
+import { runtimeConfig } from "./runtimeConfig.js";
 import { calendarSeason } from "./season.js";
 import {
   browseUrlsForTick,
@@ -58,26 +60,16 @@ function versionDir(id: string, version: number): string {
   return path.join(creationsRoot(), id, `v${version}`);
 }
 
-function readBytes(key: string, fallback: number): number {
-  const raw = getSetting(key);
-  const parsed = raw ? Number(raw) : Number.NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-}
-
 export function storageBudget(): number {
-  const fromEnv = Number(process.env.STORAGE_BUDGET_MB);
-  const fallback = Number.isFinite(fromEnv) && fromEnv > 0 ? Math.floor(fromEnv * 1024 * 1024) : DEFAULT_BUDGET;
-  return readBytes("storage_budget_bytes", fallback);
+  return runtimeConfig().storageBudgetBytes;
 }
 
 export function creationMaxBytes(): number {
-  const fromEnv = Number(process.env.CREATION_MAX_MB);
-  const fallback = Number.isFinite(fromEnv) && fromEnv > 0 ? Math.floor(fromEnv * 1024 * 1024) : DEFAULT_MAX;
-  return readBytes("creation_max_bytes", fallback);
+  return runtimeConfig().creationMaxBytes;
 }
 
 export function publicCreationsEnabled(): boolean {
-  return getSetting("creations_public") === "1";
+  return runtimeConfig().creationsPublic;
 }
 
 export function setPublicCreations(enabled: boolean): void {
@@ -260,6 +252,25 @@ export function saveCreation(args: {
     return { result: "That would go past the storage budget. Finish or leave this for later.", events: [] };
   }
   const existing = findOpenDraft(args.type, title);
+  if (existing && notes && nearDuplicate(notes, existing.pipNotes)) {
+    noteDuplicate();
+    return {
+      result: `Creation ${existing.id} already has this: ${existing.title}. Add something new, or open it.`,
+      events: [],
+    };
+  }
+  if (!existing) {
+    const near = listCreationRows().find(
+      (row) => !row.archived && row.type === args.type && nearDuplicate(row.title, title),
+    );
+    if (near) {
+      noteDuplicate();
+      return {
+        result: `Creation ${near.id} already covers this: ${near.title}. Extend that one instead of starting another.`,
+        events: [],
+      };
+    }
+  }
   if (existing && creationBytes(existing.id) + incoming > creationMaxBytes()) {
     return { result: "That version would pass the size limit for this creation.", events: [] };
   }
