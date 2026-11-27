@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { MOUSE, TOUCH } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import type { BuildingId } from "@pips/shared";
 import type { ClientState } from "../state";
 import { pendingRequestCount, unreadDiaryCount } from "../state";
 import { createAtmosphere } from "./atmosphere";
@@ -14,6 +15,7 @@ import { actionOf, createVillage, type WorldAction } from "./village";
 export type SceneHandle = {
   sync(state: ClientState): void;
   setChat(open: boolean, reply: string | null): void;
+  frameBuilding(id: BuildingId): void;
   dispose(): void;
 };
 
@@ -114,17 +116,17 @@ export function mountScene(
     if (aspect < 0.75) {
       camera.fov = 50;
       camera.position.set(20, 33, 24);
-      controls.minDistance = 16;
+      controls.minDistance = 5;
       controls.maxDistance = 52;
     } else if (aspect < 0.85) {
       camera.fov = 48;
       camera.position.set(14, 24, 16);
-      controls.minDistance = 12;
+      controls.minDistance = 5;
       controls.maxDistance = 44;
     } else {
       camera.fov = 40;
       camera.position.set(14, 13, 16);
-      controls.minDistance = 9;
+      controls.minDistance = 4;
       controls.maxDistance = 36;
     }
     controls.target.set(0, 0.2, 0);
@@ -215,6 +217,33 @@ export function mountScene(
 
   const clock = new THREE.Clock();
   let frame = 0;
+  let lastPlace: BuildingId | null = null;
+  let goal: BuildingId | null = null;
+  let homeGoal: BuildingId | null = null;
+  let carryUntil = 0;
+  let carrying = false;
+  const seenFinished = new Set<string>();
+  let primedFinished = false;
+
+  function sendPip(id: BuildingId, jump: boolean): void {
+    const spot = village.stands[id];
+    if (!spot) return;
+    if (jump) {
+      pip.placeAt(spot.stand, spot.door);
+      lastPlace = id;
+      goal = id;
+      return;
+    }
+    if (goal === id) {
+      pip.walkTo(spot.stand, spot.door);
+      return;
+    }
+    const stops = village.route(lastPlace, id);
+    pip.walkTo(spot.stand, spot.door, stops);
+    lastPlace = id;
+    goal = id;
+  }
+
   const loop = () => {
     frame = requestAnimationFrame(loop);
     const dt = Math.min(0.05, clock.getDelta());
@@ -224,7 +253,20 @@ export function mountScene(
     village.setSeason(atmosphere.look.weights);
     seasonFx.update(elapsed, dt, atmosphere.look);
     village.update(elapsed);
+    village.dressLabels(camera);
     life.update(elapsed);
+    const now = performance.now();
+    if (carryUntil > now) {
+      if (!carrying) {
+        carrying = true;
+        goal = null;
+        sendPip("gallery", false);
+      }
+    } else if (carrying) {
+      carrying = false;
+      goal = null;
+      if (homeGoal) sendPip(homeGoal, false);
+    }
     if (chatting) pip.aim(camera.position);
     pip.update(dt);
     controls.update();
@@ -238,7 +280,41 @@ export function mountScene(
     badge.textContent = count > 9 ? "9+" : String(count);
   }
 
+  function frameBuilding(id: BuildingId): void {
+    const pose = village.frontView(id);
+    controls.minDistance = 3.5;
+    controls.target.copy(pose.target);
+    camera.position.copy(pose.position);
+    controls.update();
+    village.setFocus(id);
+    village.dressLabels(camera);
+  }
+
+  function showShot(angle: "village" | "studio" | "gallery", time: "dawn" | "noon" | "night"): void {
+    const hours = time === "dawn" ? 6.15 : time === "night" ? 21.6 : 13;
+    atmosphere.holdHours(hours);
+    framed = true;
+    controls.minDistance = 3;
+    if (angle === "village") {
+      camera.position.set(9.2, 8.2, 11.6);
+      controls.target.set(-0.4, 0.8, -1.4);
+    } else {
+      const pose = village.frontView(angle === "studio" ? "workshop" : "gallery");
+      camera.position.copy(pose.position);
+      controls.target.copy(pose.target);
+    }
+    camera.updateProjectionMatrix();
+    controls.update();
+    village.dressLabels(camera);
+  }
+
+  if (new URLSearchParams(location.search).has("shot")) {
+    const shot = { show: showShot };
+    Object.assign(window, { __pipShot: shot });
+  }
+
   return {
+    frameBuilding,
     setChat(open, reply) {
       chatting = open;
       pip.setChatting(open);
@@ -263,11 +339,22 @@ export function mountScene(
       village.syncObjects(state.objects, state.blueprints, state.paths);
       village.syncCreations(state.creations?.items ?? []);
       if (state.world) atmosphere.setWorld(state.world);
+      if (!primedFinished) {
+        for (const event of state.events) {
+          if (event.kind === "creation_finished") seenFinished.add(event.id);
+        }
+        primedFinished = true;
+      } else {
+        for (const event of state.events) {
+          if (event.kind !== "creation_finished" || seenFinished.has(event.id)) continue;
+          seenFinished.add(event.id);
+          carryUntil = performance.now() + 4800;
+        }
+      }
       if (state.placement === "none" || !state.pipAt) return;
-      const spot = village.stands[state.pipAt];
-      if (!spot) return;
-      if (state.placement === "jump") pip.placeAt(spot.stand, spot.door);
-      else pip.walkTo(spot.stand, spot.door);
+      homeGoal = state.pipAt;
+      if (carrying) return;
+      sendPip(state.pipAt, state.placement === "jump");
     },
     dispose() {
       cancelAnimationFrame(frame);

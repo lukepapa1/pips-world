@@ -1166,12 +1166,19 @@ function seedBlueprints(): void {
     `INSERT INTO blueprints (name, version, spec, status, created_by, created_at)
      VALUES (?, 1, ?, 'live', 'world', ?)`,
   );
+  const refreshStarter = db.prepare(
+    `UPDATE blueprints SET spec = ? WHERE name = ? AND version = 1 AND created_by = 'world' AND status = 'live'`,
+  );
   const tx = db.transaction(() => {
     for (const item of STARTER_BLUEPRINTS) {
       const checked = validateBlueprint(item.spec);
       if ("error" in checked) throw new Error(checked.error);
+      const spec = JSON.stringify(checked.spec);
+      if (item.name === "path_tile" || item.name === "studio" || item.name === "gallery") {
+        refreshStarter.run(spec, item.name);
+      }
       if (exists.get(item.name)) continue;
-      insert.run(item.name, JSON.stringify(checked.spec), "2020-01-01T00:00:00.000Z");
+      insert.run(item.name, spec, "2020-01-01T00:00:00.000Z");
     }
   });
   tx();

@@ -225,6 +225,7 @@ export type UI = {
   openMailbox(): void;
   openChat(): void;
   openCreation(id: string): void;
+  openCreations(): void;
   openOverview(): void;
   openPip(): void;
 };
@@ -782,6 +783,22 @@ export function createUI(
       renderOverview();
       if (!overviewData) loadOverview();
       overview.querySelector<HTMLElement>(".close")?.focus();
+    },
+    openCreations() {
+      showTab("creations");
+      diary.hidden = true;
+      mailbox.hidden = true;
+      chat.hidden = true;
+      blueprints.hidden = true;
+      growth.hidden = true;
+      overview.hidden = true;
+      creations.hidden = false;
+      alerts.close();
+      hideDigest();
+      refreshScrim();
+      showChatFace();
+      renderCreations();
+      creations.querySelector<HTMLElement>(".close")?.focus();
     },
     openCreation(id: string) {
       showTab("creations");

@@ -13,6 +13,7 @@ export type Atmosphere = {
   readonly night: number;
   readonly look: SeasonLook;
   setWorld(state: WorldState): void;
+  holdHours(hours: number): void;
   update(dt: number): void;
   setQuality(quality: Quality): void;
 };
@@ -158,6 +159,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   const look: SeasonLook = { weights: shown.weights, night: 0, dusk: 0 };
   let target: WorldState | null = null;
   let snapped = false;
+  let frozen = false;
   let night = 0;
 
   function placeOnSky(azimuth: number, elevation: number, radius: number, target: THREE.Vector3): void {
@@ -166,6 +168,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   }
 
   function setWorld(state: WorldState): void {
+    if (frozen) return;
     target = state;
     if (snapped) return;
     snapped = true;
@@ -275,6 +278,30 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
       return night;
     },
     setWorld,
+    holdHours(hours) {
+      frozen = true;
+      const current = target;
+      target = {
+        season: current?.season ?? "spring",
+        nextSeason: current?.nextSeason ?? "summer",
+        blend: current?.blend ?? 0,
+        timeOfDay: (((hours % 24) + 24) % 24) / 24,
+        sunrise: current?.sunrise ?? 5.88,
+        sunset: current?.sunset ?? 20.37,
+        noonElevation: current?.noonElevation ?? 1.1,
+        date: current?.date ?? "2026-11-27",
+        time: current?.time ?? "12:00",
+        period: hours < 8 ? "dawn" : hours > 19 ? "night" : "afternoon",
+        zone: current?.zone ?? "Australia/Melbourne",
+        zoneName: current?.zoneName ?? "AEDT",
+        preview: current?.preview ?? "auto",
+        sampledAt: new Date().toISOString(),
+      };
+      snapped = true;
+      shown.sunrise = target.sunrise;
+      shown.sunset = target.sunset;
+      shown.noon = target.noonElevation;
+    },
     update,
     setQuality,
   };

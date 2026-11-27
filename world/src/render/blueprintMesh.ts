@@ -56,3 +56,44 @@ export function makeBlueprintMesh(spec: BlueprintSpec, style: string): THREE.Gro
   }
   return group;
 }
+
+/** Many copies of one blueprint, one draw call per primitive. Paths use this. */
+export function layBlueprintCopies(
+  spec: BlueprintSpec,
+  spots: { x: number; y: number; z: number; yaw: number }[],
+): THREE.Group {
+  const resolved = resolveSpec(spec, "");
+  const group = new THREE.Group();
+  if (spots.length === 0) return group;
+  const dummy = new THREE.Object3D();
+  const local = new THREE.Matrix4();
+  const placed = new THREE.Matrix4();
+  for (const primitive of resolved.primitives) {
+    const material = new THREE.MeshStandardMaterial({
+      color: primitive.colour,
+      roughness: 0.96,
+      metalness: 0,
+    });
+    const mesh = new THREE.InstancedMesh(geometryFor(primitive.shape, primitive.size), material, spots.length);
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    dummy.position.set(primitive.position[0], primitive.position[1], primitive.position[2]);
+    dummy.rotation.set(primitive.rotation[0], primitive.rotation[1], primitive.rotation[2]);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    local.copy(dummy.matrix);
+    for (let index = 0; index < spots.length; index += 1) {
+      const spot = spots[index];
+      if (!spot) continue;
+      dummy.position.set(spot.x, spot.y, spot.z);
+      dummy.rotation.set(0, spot.yaw, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      placed.multiplyMatrices(dummy.matrix, local);
+      mesh.setMatrixAt(index, placed);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    group.add(mesh);
+  }
+  return group;
+}

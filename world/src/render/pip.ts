@@ -4,7 +4,7 @@ import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 export type Pip = {
   group: THREE.Group;
   placeAt(point: THREE.Vector3, face: THREE.Vector3): void;
-  walkTo(point: THREE.Vector3, face: THREE.Vector3): void;
+  walkTo(point: THREE.Vector3, face: THREE.Vector3, via?: THREE.Vector3[]): void;
   setPaused(paused: boolean): void;
   setChatting(chatting: boolean): void;
   aim(point: THREE.Vector3): void;
@@ -181,9 +181,33 @@ export function createPip(): Pip {
     shadowMat.opacity = 1 - weight * 0.2;
   }
 
+  const via: THREE.Vector3[] = [];
+  const dest = new THREE.Vector3(Number.NaN, 0, 0);
+  let leg = 0;
+
+  function beginLeg(): void {
+    const point = via[leg];
+    if (!point) {
+      t = 1;
+      settle();
+      return;
+    }
+    if (root.position.distanceToSquared(point) < 0.01) {
+      leg += 1;
+      beginLeg();
+      return;
+    }
+    from.copy(root.position);
+    to.copy(point);
+    t = 0;
+  }
+
   return {
     group: root,
     placeAt(point, face) {
+      dest.copy(point);
+      via.length = 0;
+      leg = 0;
       from.copy(point);
       to.copy(point);
       facePoint.copy(face);
@@ -191,19 +215,23 @@ export function createPip(): Pip {
       t = 1;
       settle();
     },
-    walkTo(point, face) {
+    walkTo(point, face, stops = []) {
       facePoint.copy(face);
-      if (root.position.distanceToSquared(point) < 0.0004 && t >= 1) {
+      if (Number.isFinite(dest.x) && dest.distanceToSquared(point) < 0.04) {
+        if (t < 1 || leg < via.length) return;
         settle();
         return;
       }
+      dest.copy(point);
+      via.length = 0;
+      for (const stop of stops) via.push(stop.clone());
+      via.push(point.clone());
+      leg = 0;
       if (reduceMotion) {
         this.placeAt(point, face);
         return;
       }
-      from.copy(root.position);
-      to.copy(point);
-      t = 0;
+      beginLeg();
     },
     setPaused(next) {
       paused = next;
@@ -229,7 +257,11 @@ export function createPip(): Pip {
           const phase = t * Math.PI * 6;
           bob(phase, Math.abs(Math.sin(phase)) * 0.05);
         }
-        if (t >= 1) settle();
+        if (t >= 1) {
+          leg += 1;
+          if (leg < via.length) beginLeg();
+          else settle();
+        }
         return;
       }
       if (chatting) faceToward(look);

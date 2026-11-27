@@ -29,7 +29,7 @@ test("schema allows only the four primitives and at most 60", () => {
 });
 
 test("starter blueprints are valid data", () => {
-  assert.equal(STARTER_BLUEPRINTS.length, 8);
+  assert.equal(STARTER_BLUEPRINTS.length, 10);
   for (const item of STARTER_BLUEPRINTS) {
     const checked = validateBlueprint(item.spec);
     assert.equal("error" in checked, false, `${item.name} ${"error" in checked ? checked.error : ""}`);
