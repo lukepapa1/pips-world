@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  footprintOf,
+  footprintOfSpec,
   insideWorld,
-  isBuildable,
+  isBlueprintName,
   overlaps,
-  type BuildableType,
   type WorldEvent,
   type WorldObject,
 } from "@pips/shared";
@@ -11,6 +12,7 @@ import {
   deleteWorldObject,
   insertWorldObject,
   listWorldObjects,
+  liveBlueprint,
   makeEvent,
   saveEvents,
   updateWorldObject,
@@ -39,10 +41,18 @@ function publish(event: WorldEvent): void {
   broadcast({ type: "world_objects", objects: listWorldObjects() });
 }
 
+function radiusOf(object: Pick<WorldObject, "type" | "blueprint">): number {
+  if (object.blueprint && isBlueprintName(object.blueprint)) {
+    const live = liveBlueprint(object.blueprint);
+    if (live) return footprintOfSpec(live.spec);
+  }
+  return footprintOf(object.type);
+}
+
 function findPlaced(
   objects: WorldObject[],
   id: unknown,
-  type: BuildableType,
+  type: string,
   x: number,
   z: number,
 ): WorldObject | string {
@@ -73,7 +83,7 @@ export function runBuild(args: Record<string, unknown>, tick: number): ToolOutco
   if (action !== "add" && action !== "move" && action !== "remove") {
     return { result: "action must be add, move, or remove.", kind: null };
   }
-  if (typeof args.type !== "string" || !isBuildable(args.type)) {
+  if (typeof args.type !== "string" || !isBlueprintName(args.type) || !liveBlueprint(args.type)) {
     return { result: "That is not something you can build.", kind: null };
   }
   const type = args.type;
@@ -98,15 +108,16 @@ export function runBuild(args: Record<string, unknown>, tick: number): ToolOutco
 
 function addObject(
   objects: WorldObject[],
-  type: BuildableType,
+  type: string,
   x: number,
   z: number,
   rotation: number,
   style: string,
   tick: number,
 ): ToolOutcome {
-  if (!insideWorld(x, z, type)) return { result: "That spot is outside the village.", kind: null };
-  if (objects.some((object) => overlaps({ x, z, type }, object))) {
+  const radius = radiusOf({ type, blueprint: type });
+  if (!insideWorld(x, z, type, radius)) return { result: "That spot is outside the village.", kind: null };
+  if (objects.some((object) => overlaps({ x, z, type }, object, radius, radiusOf(object)))) {
     return { result: "That spot overlaps something already there.", kind: null };
   }
   const row: WorldObject = {
@@ -116,6 +127,8 @@ function addObject(
     z,
     rotation,
     style,
+    blueprint: type,
+    path: null,
     createdBy: "pip",
     createdAt: new Date().toISOString(),
   };
@@ -134,11 +147,14 @@ function moveObject(
   style: string,
   tick: number,
 ): ToolOutcome {
-  if (target.type === "home" || !isBuildable(target.type)) {
+  if (target.createdBy !== "pip") {
     return { result: "The houses and the trees that were already here stay where they are.", kind: null };
   }
-  if (!insideWorld(x, z, target.type)) return { result: "That spot is outside the village.", kind: null };
-  const blocked = objects.some((object) => object.id !== target.id && overlaps({ x, z, type: target.type }, object));
+  const radius = radiusOf(target);
+  if (!insideWorld(x, z, target.type, radius)) return { result: "That spot is outside the village.", kind: null };
+  const blocked = objects.some(
+    (object) => object.id !== target.id && overlaps({ x, z, type: target.type }, object, radius, radiusOf(object)),
+  );
   if (blocked) return { result: "That spot overlaps something already there.", kind: null };
   const nextStyle = style === "" ? target.style : style;
   updateWorldObject({ ...target, x, z, rotation, style: nextStyle });
@@ -154,7 +170,7 @@ function moveObject(
 }
 
 function removeObject(target: WorldObject, tick: number): ToolOutcome {
-  if (!isBuildable(target.type)) {
+  if (target.createdBy !== "pip") {
     return { result: "The houses and the trees that were already here stay where they are.", kind: null };
   }
   deleteWorldObject(target.id);

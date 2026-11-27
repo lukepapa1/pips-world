@@ -3,6 +3,10 @@ import http from "node:http";
 import path from "node:path";
 import { WebSocketServer, type RawData } from "ws";
 import type { ClientMessage, SeasonPreview, SnapshotMessage } from "@pips/shared";
+import { isGrowthPace } from "@pips/shared";
+import { approveBlueprint, latestPreviewBody, rollbackBlueprint, setApproval } from "./blueprints.js";
+import { blueprintApprovalRequired, listBlueprints, listPaths } from "./db.js";
+import { servePreview } from "./preview.js";
 import { isSeason } from "@pips/shared";
 import {
   authRequired,
@@ -38,6 +42,8 @@ import { handlePush } from "./push.js";
 import { tickInProgress, runAgentTick } from "./loop.js";
 import { currentWorldState, setSeasonPreview } from "./season.js";
 import { currentTick } from "./tickState.js";
+import { endStudy, growthView, setAwakeHours, setPace, setReadCap } from "./growth.js";
+import { rescheduleTick } from "./schedule.js";
 
 function snapshot(): SnapshotMessage {
   const tick = Math.max(currentTick(), maxTick());
@@ -53,6 +59,10 @@ function snapshot(): SnapshotMessage {
     day: dayFromTick(tick),
     world: currentWorldState(),
     objects: listWorldObjects(),
+    blueprints: listBlueprints(),
+    paths: listPaths(),
+    blueprintApproval: blueprintApprovalRequired(),
+    growth: growthView(),
   };
 }
 
@@ -79,6 +89,13 @@ function parseClientMessage(raw: string): ClientMessage | null {
     paused?: unknown;
     season?: unknown;
     id?: unknown;
+    required?: unknown;
+    name?: unknown;
+    version?: unknown;
+    pace?: unknown;
+    start?: unknown;
+    end?: unknown;
+    cap?: unknown;
   };
   if (message.type === "mark_diary_read") return { type: "mark_diary_read" };
   if (message.type === "mark_digest_read" && typeof message.id === "string" && message.id.trim()) {
@@ -89,6 +106,29 @@ function parseClientMessage(raw: string): ClientMessage | null {
   }
   if (message.type === "set_paused" && typeof message.paused === "boolean") {
     return { type: "set_paused", paused: message.paused };
+  }
+  if (message.type === "set_blueprint_approval" && typeof message.required === "boolean") {
+    return { type: "set_blueprint_approval", required: message.required };
+  }
+  if (
+    (message.type === "rollback_blueprint" || message.type === "approve_blueprint") &&
+    typeof message.name === "string" &&
+    typeof message.version === "number" &&
+    Number.isInteger(message.version)
+  ) {
+    return { type: message.type, name: message.name, version: message.version };
+  }
+  if (message.type === "set_growth_pace" && isGrowthPace(message.pace)) {
+    return { type: "set_growth_pace", pace: message.pace };
+  }
+  if (message.type === "set_awake_hours" && typeof message.start === "number" && typeof message.end === "number") {
+    return { type: "set_awake_hours", start: message.start, end: message.end };
+  }
+  if (message.type === "set_read_cap" && typeof message.cap === "number") {
+    return { type: "set_read_cap", cap: message.cap };
+  }
+  if (message.type === "end_study" && typeof message.id === "string" && message.id.trim()) {
+    return { type: "end_study", id: message.id };
   }
   if (
     message.type === "decide_request" &&
@@ -228,6 +268,17 @@ export function startServer(): http.Server {
     const pathname = pathnameOf(req.url);
     if (req.method === "GET" && pathname === "/health") {
       sendJson(res, 200, { ok: true, lastTickAt: lastTickAt() });
+      return;
+    }
+    if (isLocal(req) && req.method === "GET" && servePreview(req, res, pathname)) return;
+    if (isLocal(req) && req.method === "GET" && pathname === "/api/blueprint-spec") {
+      const name = new URL(req.url ?? "/", "http://127.0.0.1").searchParams.get("name") ?? "";
+      const body = latestPreviewBody(name);
+      if (!body) {
+        sendJson(res, 404, { ok: false, message: "No blueprint." });
+        return;
+      }
+      sendJson(res, 200, body);
       return;
     }
     if (pathname === "/login" && (req.method === "GET" || req.method === "POST")) {
@@ -451,6 +502,41 @@ export function startServer(): http.Server {
       }
 
       const tick = Math.max(currentTick(), maxTick());
+      if (message.type === "set_blueprint_approval") {
+        setApproval(message.required);
+        return;
+      }
+      if (message.type === "set_growth_pace") {
+        setPace(message.pace);
+        rescheduleTick();
+        return;
+      }
+      if (message.type === "set_awake_hours") {
+        const error = setAwakeHours(message.start, message.end);
+        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
+        else rescheduleTick();
+        return;
+      }
+      if (message.type === "set_read_cap") {
+        const error = setReadCap(message.cap);
+        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
+        return;
+      }
+      if (message.type === "end_study") {
+        const outcome = endStudy(message.id, "Ended from the Growth panel.");
+        if (!outcome.result.endsWith("is closed.")) {
+          socket.send(JSON.stringify({ type: "error", message: outcome.result }));
+        }
+        return;
+      }
+      if (message.type === "rollback_blueprint" || message.type === "approve_blueprint") {
+        const error =
+          message.type === "rollback_blueprint"
+            ? rollbackBlueprint(message.name, message.version, tick)
+            : approveBlueprint(message.name, message.version, tick);
+        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
+        return;
+      }
       if (message.type === "set_paused") {
         const event = setPausedFlag(message.paused, tick);
         if (event) {

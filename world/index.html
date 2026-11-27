@@ -41,6 +41,10 @@
           <button type="button" id="open-mailbox">
             Mailbox <span id="mail-count" class="count" hidden>0</span>
           </button>
+          <button type="button" id="open-blueprints">
+            Blueprints <span id="blueprint-count" class="count" hidden>0</span>
+          </button>
+          <button type="button" id="open-growth">Growth</button>
           <button type="button" id="pause" aria-pressed="false">Pause</button>
           <button type="button" id="open-alerts">Alerts</button>
           <button type="button" id="logout">Log out</button>
@@ -114,6 +118,28 @@
           <button type="button" class="close" data-close="mailbox">Close</button>
         </header>
         <div id="mailbox-body" class="panel-body"></div>
+      </section>
+
+      <section id="blueprints" class="panel" role="dialog" aria-modal="true" aria-labelledby="blueprints-title" hidden>
+        <header>
+          <div>
+            <h2 id="blueprints-title">Blueprints</h2>
+            <p id="blueprints-sub">Versions of each object</p>
+          </div>
+          <button type="button" class="close" data-close="blueprints">Close</button>
+        </header>
+        <div id="blueprints-body" class="panel-body"></div>
+      </section>
+
+      <section id="growth" class="panel" role="dialog" aria-modal="true" aria-labelledby="growth-title" hidden>
+        <header>
+          <div>
+            <h2 id="growth-title">Growth</h2>
+            <p id="growth-sub">Pace, studies, and notes</p>
+          </div>
+          <button type="button" class="close" data-close="growth">Close</button>
+        </header>
+        <div id="growth-body" class="panel-body"></div>
       </section>
 
       <section id="alerts" class="panel" role="dialog" aria-modal="true" aria-labelledby="alerts-title" hidden>

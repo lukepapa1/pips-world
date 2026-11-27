@@ -76,15 +76,25 @@ export type Turn = {
 
 let client: OpenAI | null = null;
 
-function llmClient(): { client: OpenAI; model: string } {
+export function tickModel(): string {
+  const model = process.env.LLM_MODEL;
+  if (!model) throw new LlmError("LLM_MODEL is required.");
+  return model;
+}
+
+export function reflectModel(): string {
+  const named = process.env.LLM_MODEL_REFLECT?.trim();
+  return named || tickModel();
+}
+
+function openai(): OpenAI {
   const baseURL = process.env.LLM_BASE_URL;
   const apiKey = process.env.LLM_API_KEY;
-  const model = process.env.LLM_MODEL;
-  if (!baseURL || !apiKey || !model) {
+  if (!baseURL || !apiKey || !process.env.LLM_MODEL) {
     throw new LlmError("LLM_BASE_URL, LLM_API_KEY and LLM_MODEL are required.");
   }
   if (!client) client = new OpenAI({ baseURL, apiKey, timeout: 240_000 });
-  return { client, model };
+  return client;
 }
 
 function redact(text: string): string {
@@ -200,17 +210,18 @@ async function request(
   messages: ChatCompletionMessageParam[],
   specs: ToolSpec[],
   meter: Meter,
+  model: string,
   force?: string,
   maxTokens = 1200,
 ): Promise<{ turn: Turn; message: ChatCompletionMessage | undefined }> {
-  const { client: openai, model } = llmClient();
+  const openaiClient = openai();
   const maxAttempts = 4;
   let lastStatus = 429;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     meter.chargeCall();
     try {
-      const response = await openai.chat.completions.create({
+      const response = await openaiClient.chat.completions.create({
         model,
         messages,
         ...(specs.length > 0
@@ -252,8 +263,9 @@ export async function speak(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
   meter: Meter,
   maxTokens: number,
+  model = tickModel(),
 ): Promise<string> {
-  const { client: openai, model } = llmClient();
+  const openaiClient = openai();
   const maxAttempts = 4;
   let lastStatus = 429;
   const body: ChatCompletionMessageParam[] = [
@@ -264,7 +276,7 @@ export async function speak(
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     meter.chargeCall();
     try {
-      const response = await openai.chat.completions.create({
+      const response = await openaiClient.chat.completions.create({
         model,
         messages: body,
         max_tokens: maxTokens,
@@ -294,16 +306,21 @@ export async function speak(
 
 export class Chat {
   private readonly messages: ChatCompletionMessageParam[];
+  private readonly model: string;
 
-  private constructor(messages: ChatCompletionMessageParam[]) {
+  private constructor(messages: ChatCompletionMessageParam[], model: string) {
     this.messages = messages;
+    this.model = model;
   }
 
-  static start(system: string, user: string): Chat {
-    return new Chat([
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ]);
+  static start(system: string, user: string, model = tickModel()): Chat {
+    return new Chat(
+      [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      model,
+    );
   }
 
   addUser(text: string): void {
@@ -336,7 +353,7 @@ export class Chat {
   }
 
   async turn(specs: ToolSpec[], meter: Meter, force?: string, maxTokens = 1200): Promise<Turn> {
-    const first = await request(this.messages, specs, meter, force, maxTokens);
+    const first = await request(this.messages, specs, meter, this.model, force, maxTokens);
     if (first.turn.rejected.length === 0) {
       this.pushAssistant(first.message);
       return first.turn;
@@ -344,7 +361,7 @@ export class Chat {
 
     console.warn("Malformed tool call, retrying once.");
     try {
-      const second = await request(this.messages, specs, meter, force, maxTokens);
+      const second = await request(this.messages, specs, meter, this.model, force, maxTokens);
       this.pushAssistant(second.message);
       for (const bad of second.turn.rejected) {
         console.warn(`Malformed tool call ignored: ${bad.name} (${bad.reason}).`);

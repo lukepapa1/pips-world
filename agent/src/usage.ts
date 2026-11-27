@@ -159,7 +159,7 @@ export function noteSearch(): void {
 }
 
 export function readCap(): number {
-  const cap = capNumber("DAILY_READ_CAP", "daily_read_cap", 100);
+  const cap = capNumber("DAILY_READ_CAP", "daily_read_cap", 200);
   setSetting("daily_read_cap", String(cap));
   return cap;
 }

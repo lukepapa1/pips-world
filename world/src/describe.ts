@@ -29,6 +29,8 @@ export function eventLabel(event: WorldEvent): string {
       return "Web";
     case "build":
       return "Built";
+    case "blueprint":
+      return "Blueprint";
   }
 }
 
@@ -74,6 +76,15 @@ export function eventText(event: WorldEvent): string {
       if (event.payload.action === "add") return `Pip placed a ${name}.`;
       if (event.payload.action === "move") return `Pip moved a ${name}.`;
       return `Pip removed a ${name}.`;
+    }
+    case "blueprint": {
+      const { action, name, version, status } = event.payload;
+      if (action === "preview") return `Blueprint ${name} version ${version} was previewed.`;
+      if (action === "rollback") return `Blueprint ${name} rolled back to version ${version}.`;
+      if (action === "approve") return `Blueprint ${name} version ${version} is live.`;
+      return status === "live"
+        ? `Blueprint ${name} version ${version} is live.`
+        : `Blueprint ${name} version ${version} is waiting for approval.`;
     }
   }
 }

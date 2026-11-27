@@ -255,7 +255,7 @@ export function mountScene(
       setBadge(village.mailboxBadge, pendingRequestCount(state));
       pip.setPaused(state.paused);
       village.setBrowsing(state.browsing !== null);
-      village.syncObjects(state.objects);
+      village.syncObjects(state.objects, state.blueprints, state.paths);
       if (state.world) atmosphere.setWorld(state.world);
       if (state.placement === "none" || !state.pipAt) return;
       const spot = village.stands[state.pipAt];

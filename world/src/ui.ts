@@ -8,6 +8,8 @@ import {
   type RequestRow,
   type Season,
 } from "@pips/shared";
+import { blueprintMarkup, pendingBlueprintCount } from "./blueprintsPanel";
+import { growthMarkup } from "./growthPanel";
 import { eventClass, eventHour, eventLabel, eventText } from "./describe";
 import { mountAlerts } from "./alerts";
 import {
@@ -255,6 +257,14 @@ export function createUI(
   const openChatButton = must<HTMLButtonElement>("open-chat");
   const openDiaryButton = must<HTMLButtonElement>("open-diary");
   const openMailboxButton = must<HTMLButtonElement>("open-mailbox");
+  const blueprints = must<HTMLElement>("blueprints");
+  const blueprintsBody = must<HTMLElement>("blueprints-body");
+  const blueprintsSub = must<HTMLElement>("blueprints-sub");
+  const blueprintCount = must<HTMLElement>("blueprint-count");
+  const openBlueprintsButton = must<HTMLButtonElement>("open-blueprints");
+  const growth = must<HTMLElement>("growth");
+  const growthBody = must<HTMLElement>("growth-body");
+  const openGrowthButton = must<HTMLButtonElement>("open-growth");
   const openAlertsButton = must<HTMLButtonElement>("open-alerts");
   const seasonIcon = must<HTMLElement>("season-icon");
   const seasonLabel = must<HTMLElement>("season-label");
@@ -310,6 +320,8 @@ export function createUI(
   let feedSig = "";
   let diarySig = "";
   let mailSig = "";
+  let blueprintSig = "";
+  let growthSig = "";
   let digestSig = "";
   let selectedDay = 0;
   let bootShown = false;
@@ -380,13 +392,22 @@ export function createUI(
   const alerts = mountAlerts(showToast);
 
   function refreshScrim(): void {
-    scrim.hidden = diary.hidden && mailbox.hidden && chat.hidden && digest.hidden && alerts.isOpen() === false;
+    scrim.hidden =
+      diary.hidden &&
+      mailbox.hidden &&
+      chat.hidden &&
+      digest.hidden &&
+      blueprints.hidden &&
+      growth.hidden &&
+      alerts.isOpen() === false;
   }
 
   function closePanels(): void {
     diary.hidden = true;
     mailbox.hidden = true;
     chat.hidden = true;
+    blueprints.hidden = true;
+    growth.hidden = true;
     alerts.close();
     hideDigest();
     refreshScrim();
@@ -460,6 +481,8 @@ export function createUI(
     digest.hidden = false;
     diary.hidden = true;
     mailbox.hidden = true;
+    blueprints.hidden = true;
+    growth.hidden = true;
     chat.hidden = true;
     alerts.close();
     refreshScrim();
@@ -510,6 +533,9 @@ export function createUI(
       setCount(diaryCount, unread);
       setCount(mailCount, pending);
       setCount(digestCount, unreadDigestCount(state));
+      const waiting = pendingBlueprintCount(state);
+      setCount(blueprintCount, waiting);
+      blueprintsSub.textContent = waiting > 0 ? `${waiting} waiting for approval` : "Versions of each object";
       diarySub.textContent =
         unread > 0 ? `${unread} unread · newest first` : "Newest first, grouped by day";
       mailSub.textContent = pending > 0 ? `${pending} waiting for an answer` : "Nothing waiting";
@@ -546,6 +572,24 @@ export function createUI(
         mailboxBody.scrollTop = mailTop;
         mailSig = nextMail;
       }
+      const nextBlueprints = `${state.blueprintApproval}:${state.blueprints
+        .map((record) => `${record.name}:${record.version}:${record.status}`)
+        .join("|")}`;
+      if (nextBlueprints !== blueprintSig) {
+        const top = blueprintsBody.scrollTop;
+        blueprintsBody.innerHTML = blueprintMarkup(state);
+        blueprintsBody.scrollTop = top;
+        blueprintSig = nextBlueprints;
+      }
+      const growthKey = state.growth
+        ? `${state.growth.pace}:${state.growth.callsUsed}:${state.growth.readCap}:${state.growth.awakeStart}:${state.growth.awakeEnd}:${state.growth.plans.map((plan) => plan.id + plan.ticksDone).join(",")}:${state.growth.notesCount}:${state.growth.topicsThisWeek.join(",")}`
+        : "";
+      if (growthKey !== growthSig) {
+        const top = growthBody.scrollTop;
+        growthBody.innerHTML = growthMarkup(state);
+        growthBody.scrollTop = top;
+        growthSig = growthKey;
+      }
       renderDigest(state);
       considerDigest(state);
       if (!diary.hidden && state.diary.some((entry) => !entry.readAt)) {
@@ -554,6 +598,8 @@ export function createUI(
     },
     openDiary() {
       mailbox.hidden = true;
+      blueprints.hidden = true;
+      growth.hidden = true;
       chat.hidden = true;
       alerts.close();
       hideDigest();
@@ -565,6 +611,8 @@ export function createUI(
     },
     openMailbox() {
       diary.hidden = true;
+      blueprints.hidden = true;
+      growth.hidden = true;
       chat.hidden = true;
       alerts.close();
       hideDigest();
@@ -577,6 +625,8 @@ export function createUI(
     openChat() {
       diary.hidden = true;
       mailbox.hidden = true;
+      blueprints.hidden = true;
+      growth.hidden = true;
       alerts.close();
       hideDigest();
       chat.hidden = false;
@@ -617,6 +667,42 @@ export function createUI(
   openChatButton.addEventListener("click", () => ui.openChat());
   openDiaryButton.addEventListener("click", () => ui.openDiary());
   openMailboxButton.addEventListener("click", () => ui.openMailbox());
+  openBlueprintsButton.addEventListener("click", () => {
+    if (!blueprints.hidden) {
+      blueprints.hidden = true;
+      refreshScrim();
+      return;
+    }
+    diary.hidden = true;
+    mailbox.hidden = true;
+    chat.hidden = true;
+    growth.hidden = true;
+    alerts.close();
+    hideDigest();
+    blueprints.hidden = false;
+    refreshScrim();
+    showChatFace();
+    ui.sync(getState());
+    blueprints.querySelector<HTMLElement>(".close")?.focus();
+  });
+  openGrowthButton.addEventListener("click", () => {
+    if (!growth.hidden) {
+      growth.hidden = true;
+      refreshScrim();
+      return;
+    }
+    diary.hidden = true;
+    mailbox.hidden = true;
+    chat.hidden = true;
+    blueprints.hidden = true;
+    alerts.close();
+    hideDigest();
+    growth.hidden = false;
+    refreshScrim();
+    showChatFace();
+    ui.sync(getState());
+    growth.querySelector<HTMLElement>(".close")?.focus();
+  });
   openAlertsButton.addEventListener("click", () => {
     if (alerts.isOpen()) {
       alerts.close();
@@ -625,6 +711,8 @@ export function createUI(
     }
     diary.hidden = true;
     mailbox.hidden = true;
+    blueprints.hidden = true;
+    growth.hidden = true;
     chat.hidden = true;
     hideDigest();
     alerts.open();
@@ -654,13 +742,60 @@ export function createUI(
       target.dataset.close === "mailbox" ||
       target.dataset.close === "chat" ||
       target.dataset.close === "digest" ||
-      target.dataset.close === "alerts"
+      target.dataset.close === "alerts" ||
+      target.dataset.close === "blueprints" ||
+      target.dataset.close === "growth"
     ) {
       closePanels();
     }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closePanels();
+  });
+  growthBody.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement)) return;
+    if (target.dataset.pace === "calm" || target.dataset.pace === "active" || target.dataset.pace === "fast") {
+      if (!send({ type: "set_growth_pace", pace: target.dataset.pace })) showToast("Not connected.");
+      return;
+    }
+    if (target.dataset.endStudy) {
+      if (!send({ type: "end_study", id: target.dataset.endStudy })) showToast("Not connected.");
+    }
+  });
+  growthBody.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    event.preventDefault();
+    const data = new FormData(form);
+    if (form.dataset.growth === "awake") {
+      const start = Number(data.get("start"));
+      const end = Number(data.get("end"));
+      if (!send({ type: "set_awake_hours", start, end })) showToast("Not connected.");
+      return;
+    }
+    if (form.dataset.growth === "reads") {
+      const cap = Number(data.get("cap"));
+      if (!send({ type: "set_read_cap", cap })) showToast("Not connected.");
+    }
+  });
+  blueprintsBody.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.dataset.approval !== "required") return;
+    if (!send({ type: "set_blueprint_approval", required: target.checked })) showToast("Not connected.");
+  });
+  blueprintsBody.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const version = Number(target.dataset.version);
+    if (!Number.isInteger(version)) return;
+    if (target.dataset.rollback) {
+      if (!send({ type: "rollback_blueprint", name: target.dataset.rollback, version })) showToast("Not connected.");
+      return;
+    }
+    if (target.dataset.approve) {
+      if (!send({ type: "approve_blueprint", name: target.dataset.approve, version })) showToast("Not connected.");
+    }
   });
   mailboxBody.addEventListener("click", (event) => {
     const target = event.target;

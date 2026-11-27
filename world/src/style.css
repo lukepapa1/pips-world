@@ -691,3 +691,31 @@ body.is-paused #scene { filter: saturate(0.72); }
 @media (prefers-reduced-motion: reduce) {
   body.is-paused #scene { filter: none; }
 }
+
+.approval {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 14px;
+  font-size: 0.92rem;
+}
+
+.blueprint-name { margin: 0 0 16px; }
+.blueprint-name h3 { margin: 0 0 6px; font-size: 1rem; }
+.blueprint-name ul { list-style: none; margin: 0; padding: 0; }
+.blueprint-name li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid rgba(90, 60, 30, 0.1);
+}
+.blueprint-name .status { color: var(--muted); font-size: 0.85rem; }
+.blueprint-name .who { color: var(--muted); font-size: 0.85rem; margin-right: auto; }
+.blueprint-name button { padding: 4px 10px; }
+
+.pace-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.pace-row button[aria-pressed="true"] { outline: 2px solid var(--navy); }
+.slot-list { font-size: 0.88rem; line-height: 1.45; }
+#growth form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+#growth input[type="number"] { width: 4.5rem; }

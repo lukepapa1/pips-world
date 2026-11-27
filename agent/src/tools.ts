@@ -7,6 +7,8 @@ import { readMemory, writeMemory } from "./memory.js";
 import { noteRead, noteSearch, readCap, readsLeft, searchCap, searchesLeft, webCallsPerTick } from "./usage.js";
 import { domainOf, formatSearch, openableUrl, readPage, viewImage, webContent, webSearch } from "./web.js";
 import { runBuild } from "./build.js";
+import { designBlueprint, layPath, previewBlueprint } from "./blueprints.js";
+import { continueStudy, endStudy, saveNote, searchNotes, startStudy } from "./growth.js";
 
 const TEXT_MAX = 4000;
 const FILE_MAX = 12_000;
@@ -98,17 +100,73 @@ export const PIP_TOOLS: ToolSpec[] = [
     required: ["text"],
   },
   {
+    name: "design_blueprint",
+    description:
+      "Create or publish a new version of a blueprint. name is lowercase. spec is JSON data: primitives (box, cylinder, cone, sphere) with size, position, rotation and colour, plus optional numeric parameters and an optional behaviour of sway or follow_path. No code.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Blueprint name, lowercase letters and underscores." },
+        spec: {
+          type: "object",
+          description: "JSON blueprint. Primitives only.",
+          additionalProperties: true,
+        },
+      },
+      required: ["name", "spec"],
+    },
+    required: ["name", "spec"],
+  },
+  {
+    name: "preview_blueprint",
+    description:
+      "Draw the latest version of a blueprint and show you the picture, so you can critique it and revise. At most 4 previews of one blueprint per day.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Blueprint name." },
+      },
+      required: ["name"],
+    },
+    required: ["name"],
+  },
+  {
+    name: "lay_path",
+    description:
+      "Store a path as a list of { x, z } points inside the village. Optional object_id attaches it to something you placed, for a blueprint whose behaviour is follow_path.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Path name." },
+        points: {
+          type: "array",
+          description: "Between 2 and 24 points.",
+          items: {
+            type: "object",
+            properties: {
+              x: { type: "number" },
+              z: { type: "number" },
+            },
+            required: ["x", "z"],
+          },
+        },
+        object_id: { type: "string", description: "Optional id of an object you placed." },
+      },
+      required: ["name", "points"],
+    },
+    required: ["name", "points"],
+  },
+  {
     name: "build",
     description:
-      "Add, move, or remove something you placed in the village. Types: bench, garden_bed, shelf, lamp, tree, flower_patch, fence, path_tile. x and z are metres from the centre. rotation is radians. Pass id when moving or removing one of several. You cannot move or remove the houses or the trees that were already here.",
+      "Add, move, or remove something you placed in the village. type is a live blueprint name, such as bench, garden_bed, shelf, lamp, tree, flower_patch, fence, or path_tile, or one you designed. x and z are metres from the centre. rotation is radians. Pass id when moving or removing one of several. You cannot move or remove the houses or the trees that were already here.",
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["add", "move", "remove"], description: "What to do." },
         type: {
           type: "string",
-          enum: ["bench", "garden_bed", "shelf", "lamp", "tree", "flower_patch", "fence", "path_tile"],
-          description: "What kind of object.",
+          description: "Blueprint name to place.",
         },
         x: { type: "number", description: "Metres east of the centre." },
         z: { type: "number", description: "Metres north of the centre." },
@@ -119,6 +177,73 @@ export const PIP_TOOLS: ToolSpec[] = [
       required: ["action", "type", "x", "z"],
     },
     required: ["action", "type", "x", "z"],
+  },
+  {
+    name: "start_study",
+    description:
+      "Open a study on a topic you choose. Say why it matters to you and how many ticks you plan, from 1 to 12. At most two studies can be open.",
+    parameters: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "The topic you chose." },
+        why: { type: "string", description: "Why you want to spend time on it." },
+        planned_ticks: { type: "number", description: "How many ticks you plan, from 1 to 12." },
+      },
+      required: ["topic", "why", "planned_ticks"],
+    },
+    required: ["topic", "why"],
+  },
+  {
+    name: "continue_study",
+    description: "Add what you learned to an open study. Pass its id and your notes.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Study id." },
+        notes: { type: "string", description: "What you learned this tick." },
+      },
+      required: ["id", "notes"],
+    },
+    required: ["id", "notes"],
+  },
+  {
+    name: "end_study",
+    description: "Close an open study with a short summary of what you keep from it.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Study id." },
+        summary: { type: "string", description: "What you want to keep." },
+      },
+      required: ["id", "summary"],
+    },
+    required: ["id", "summary"],
+  },
+  {
+    name: "save_note",
+    description: "Save a knowledge note on a topic, with the text and any sources you actually used.",
+    parameters: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "Topic of the note." },
+        text: { type: "string", description: "What you want to remember." },
+        sources: { type: "string", description: "Links or names of sources. Optional." },
+      },
+      required: ["topic", "text"],
+    },
+    required: ["topic", "text"],
+  },
+  {
+    name: "search_notes",
+    description: "Search notes you have saved. Pass a topic or a few words.",
+    parameters: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "What to look for." },
+      },
+      required: ["topic"],
+    },
+    required: ["topic"],
   },
 ];
 
@@ -175,6 +300,22 @@ export async function executeTool(
       return updateFile("interests.md", args);
     case "build":
       return runBuild(args, tick);
+    case "design_blueprint":
+      return designBlueprint(typeof args.name === "string" ? args.name : "", args.spec, tick);
+    case "preview_blueprint":
+      return previewBlueprint(typeof args.name === "string" ? args.name : "", tick);
+    case "lay_path":
+      return layPath(args, tick);
+    case "start_study":
+      return startStudy(args.topic, args.why, args.planned_ticks);
+    case "continue_study":
+      return continueStudy(args.id, args.notes);
+    case "end_study":
+      return endStudy(args.id, args.summary);
+    case "save_note":
+      return saveNote(args.topic, args.text, args.sources);
+    case "search_notes":
+      return searchNotes(args.topic);
     default:
       return { result: "Unknown tool.", kind: null };
   }

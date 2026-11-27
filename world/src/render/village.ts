@@ -6,12 +6,17 @@ import {
   SEASONS,
   VILLAGE_RADIUS,
   buildingAngle,
+  isBuildable,
   isBuildingId,
+  liveSpec,
   starterObjects,
+  type BlueprintRecord,
   type BuildingId,
+  type PathRecord,
   type Season,
   type WorldObject,
 } from "@pips/shared";
+import { makeBlueprintMesh } from "./blueprintMesh";
 import { makePiece } from "./pieces";
 import type { Quality } from "./quality";
 
@@ -217,7 +222,7 @@ export type Village = {
   setBrowsing(on: boolean): void;
   setSeason(weights: Record<Season, number>): void;
   setQuality(quality: Quality): void;
-  syncObjects(objects: WorldObject[]): void;
+  syncObjects(objects: WorldObject[], blueprints?: BlueprintRecord[], paths?: PathRecord[]): void;
 };
 
 export function createVillage(scene: THREE.Scene, quality: Quality): Village {
@@ -609,7 +614,7 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     };
   }
 
-  function syncObjects(objects: WorldObject[]): void {
+  function syncObjects(objects: WorldObject[], blueprints: BlueprintRecord[] = [], paths: PathRecord[] = []): void {
     if (objects.length === 0) return;
     const seen = new Set<string>();
     const shownBuildings = new Set<BuildingId>();
@@ -624,18 +629,24 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
         continue;
       }
       seen.add(object.id);
+      const name = object.blueprint ?? object.type;
+      const live = liveSpec(blueprints, name);
+      const specKey = `${name}@${live?.version ?? 0}|${object.style}`;
       let group = dynamic.get(object.id);
-      if (group && group.userData.style !== object.style) {
+      if (group && group.userData.specKey !== specKey) {
         scene.remove(group);
         disposeGroup(group);
         dynamic.delete(object.id);
         group = undefined;
       }
       if (!group) {
-        group = makePiece(object.type, object.style);
+        group = live ? makeBlueprintMesh(live.spec, object.style) : isBuildable(object.type) ? makePiece(object.type, object.style) : new THREE.Group();
+        group.userData.specKey = specKey;
         scene.add(group);
         dynamic.set(object.id, group);
       }
+      const route = paths.find((path) => path.name === object.path);
+      group.userData.route = route ? route.points : null;
       group.position.set(object.x, 0, object.z);
       group.userData.yaw = object.rotation;
       group.rotation.y = object.rotation;
@@ -775,8 +786,23 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
       });
       const motion = reduceMotion ? 0 : 1;
       for (const group of dynamic.values()) {
-        const seed = group.userData.seed;
         const yaw = group.userData.yaw;
+        const route = group.userData.route;
+        if (group.userData.follow === true && Array.isArray(route) && route.length >= 2) {
+          if (motion === 0) {
+            const first = route[0] as { x: number; z: number };
+            group.position.set(first.x, 0, first.z);
+            if (typeof yaw === "number") group.rotation.y = yaw;
+          } else {
+            const speed = typeof group.userData.speed === "number" ? group.userData.speed : 0.5;
+            const spot = travel(route as { x: number; z: number }[], time * speed);
+            group.position.set(spot.x, 0, spot.z);
+            group.rotation.y = spot.yaw;
+          }
+          group.rotation.z = 0;
+          continue;
+        }
+        const seed = group.userData.seed;
         if (typeof seed !== "number" || typeof yaw !== "number") continue;
         const tilt = (Math.sin(time * 1.15 + seed) * 0.02 + Math.sin(time * 0.37 + seed) * 0.008) * motion;
         group.rotation.y = yaw;
@@ -791,6 +817,38 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     },
     syncObjects,
   };
+}
+
+function travel(points: { x: number; z: number }[], distance: number): { x: number; z: number; yaw: number } {
+  const lengths: number[] = [];
+  let total = 0;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const from = points[index];
+    const to = points[index + 1];
+    if (!from || !to) continue;
+    const length = Math.hypot(to.x - from.x, to.z - from.z);
+    lengths.push(length);
+    total += length;
+  }
+  const start = points[0];
+  if (!start || total <= 0.001) return { x: start?.x ?? 0, z: start?.z ?? 0, yaw: 0 };
+  let left = distance % total;
+  for (let index = 0; index < lengths.length; index += 1) {
+    const from = points[index];
+    const to = points[index + 1];
+    const length = lengths[index] ?? 0;
+    if (!from || !to) break;
+    if (left <= length || index === lengths.length - 1) {
+      const t = length === 0 ? 0 : Math.min(1, left / length);
+      return {
+        x: from.x + (to.x - from.x) * t,
+        z: from.z + (to.z - from.z) * t,
+        yaw: Math.atan2(to.x - from.x, to.z - from.z),
+      };
+    }
+    left -= length;
+  }
+  return { x: start.x, z: start.z, yaw: 0 };
 }
 
 function colors(hexes: string[]): THREE.Color[] {

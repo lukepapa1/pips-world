@@ -9,7 +9,7 @@
     "tick": "tsx src/tick-cli.ts",
     "digest": "tsx src/digest-cli.ts",
     "check": "tsc --noEmit",
-    "test": "tsx --test src/clock.test.ts"
+    "test": "tsx --test src/clock.test.ts src/blueprint.test.ts src/growth.test.ts"
   },
   "dependencies": {
     "@pips/shared": "*",
@@ -17,6 +17,7 @@
     "luxon": "^3.7.2",
     "node-cron": "^4.2.1",
     "openai": "^6.9.1",
+    "playwright": "^1.65.1",
     "suncalc": "^2.1.4",
     "tsx": "^4.20.6",
     "web-push": "^4.0.0",

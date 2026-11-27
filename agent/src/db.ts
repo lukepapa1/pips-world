@@ -19,7 +19,16 @@ import {
   type WorldObject,
   isDigestRow,
   isPlaceType,
+  isWorldObject,
   starterObjects,
+  STARTER_BLUEPRINTS,
+  BUILDABLE,
+  isBlueprintName,
+  isBlueprintRecord,
+  validateBlueprint,
+  type BlueprintRecord,
+  type BlueprintStatus,
+  type PathRecord,
 } from "@pips/shared";
 import { sqliteFile } from "./env.js";
 
@@ -58,7 +67,7 @@ function migrate(): void {
     CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL CHECK (kind IN (
-        'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build'
+        'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint'
       )),
       tick INTEGER NOT NULL,
       day INTEGER NOT NULL,
@@ -143,26 +152,79 @@ function migrate(): void {
       created_by TEXT NOT NULL CHECK (created_by IN ('world', 'pip')),
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS blueprints (
+      name TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      spec TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('live', 'pending', 'archived')),
+      created_by TEXT NOT NULL CHECK (created_by IN ('world', 'pip')),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (name, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS paths (
+      name TEXT PRIMARY KEY,
+      points TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS study_plans (
+      id TEXT PRIMARY KEY,
+      topic TEXT NOT NULL,
+      why TEXT NOT NULL,
+      planned_ticks INTEGER NOT NULL,
+      ticks_done INTEGER NOT NULL,
+      notes TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('active', 'done')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS notes (
+      id TEXT PRIMARY KEY,
+      topic TEXT NOT NULL,
+      body TEXT NOT NULL,
+      sources TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      touched_at TEXT NOT NULL,
+      prompted_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notes_touched ON notes(touched_at);
   `);
   db.prepare(
     `INSERT INTO settings (key, value) VALUES ('paused', '0')
      ON CONFLICT(key) DO NOTHING`,
   ).run();
   widenEventKinds();
+  ensureObjectColumns();
   seedWorld();
+  seedBlueprints();
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES ('blueprint_approval', '0')
+     ON CONFLICT(key) DO NOTHING`,
+  ).run();
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES
+       ('growth_pace', 'calm'),
+       ('awake_start', '7'),
+       ('awake_end', '23')
+     ON CONFLICT(key) DO NOTHING`,
+  ).run();
 }
 
 function widenEventKinds(): void {
   const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'`).get() as
     | { sql: string }
     | undefined;
-  if (!row || row.sql.includes("'build'")) return;
+  if (!row || row.sql.includes("'blueprint'")) return;
   const tx = db.transaction(() => {
     db.exec(`
       CREATE TABLE events_next (
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN (
-          'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build'
+          'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint'
         )),
         tick INTEGER NOT NULL,
         day INTEGER NOT NULL,
@@ -647,6 +709,7 @@ function persist(event: WorldEvent): void {
     case "chat":
     case "browse":
     case "build":
+    case "blueprint":
       break;
   }
 }
@@ -863,31 +926,65 @@ type ObjectSql = {
   z: number;
   rotation: number;
   style: string;
+  blueprint: string | null;
+  path: string | null;
   created_by: string;
   created_at: string;
 };
 
 function mapObject(row: ObjectSql): WorldObject | null {
-  if (!isPlaceType(row.type)) return null;
+  if (!isBlueprintName(row.type) && !isPlaceType(row.type)) return null;
   if (row.created_by !== "world" && row.created_by !== "pip") return null;
-  return {
+  const blueprint = row.blueprint && isBlueprintName(row.blueprint) ? row.blueprint : null;
+  const path = row.path && isBlueprintName(row.path) ? row.path : null;
+  const object: WorldObject = {
     id: row.id,
     type: row.type,
     x: row.x,
     z: row.z,
     rotation: row.rotation,
     style: row.style,
+    blueprint,
+    path,
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
+  if (!isWorldObject(object)) return null;
+  return object;
+}
+
+function ensureObjectColumns(): void {
+  const columns = db.prepare(`PRAGMA table_info(world_objects)`).all() as { name: string }[];
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has("blueprint")) db.exec(`ALTER TABLE world_objects ADD COLUMN blueprint TEXT`);
+  if (!names.has("path")) db.exec(`ALTER TABLE world_objects ADD COLUMN path TEXT`);
+  const catalogue = BUILDABLE.map((type) => `'${type}'`).join(", ");
+  db.exec(`UPDATE world_objects SET blueprint = type WHERE blueprint IS NULL AND type IN (${catalogue})`);
+}
+
+function seedBlueprints(): void {
+  const exists = db.prepare(`SELECT 1 AS ok FROM blueprints WHERE name = ? LIMIT 1`);
+  const insert = db.prepare(
+    `INSERT INTO blueprints (name, version, spec, status, created_by, created_at)
+     VALUES (?, 1, ?, 'live', 'world', ?)`,
+  );
+  const tx = db.transaction(() => {
+    for (const item of STARTER_BLUEPRINTS) {
+      const checked = validateBlueprint(item.spec);
+      if ("error" in checked) throw new Error(checked.error);
+      if (exists.get(item.name)) continue;
+      insert.run(item.name, JSON.stringify(checked.spec), "2020-01-01T00:00:00.000Z");
+    }
+  });
+  tx();
 }
 
 function seedWorld(): void {
   const count = db.prepare(`SELECT COUNT(*) AS n FROM world_objects`).get() as { n: number };
   if (count.n > 0) return;
   const insert = db.prepare(
-    `INSERT INTO world_objects (id, type, x, z, rotation, style, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO world_objects (id, type, x, z, rotation, style, blueprint, path, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const tx = db.transaction(() => {
     for (const object of starterObjects()) {
@@ -898,6 +995,8 @@ function seedWorld(): void {
         object.z,
         object.rotation,
         object.style,
+        object.blueprint,
+        object.path,
         object.createdBy,
         object.createdAt,
       );
@@ -908,7 +1007,9 @@ function seedWorld(): void {
 
 export function listWorldObjects(): WorldObject[] {
   const rows = db
-    .prepare(`SELECT id, type, x, z, rotation, style, created_by, created_at FROM world_objects ORDER BY created_at, id`)
+    .prepare(
+      `SELECT id, type, x, z, rotation, style, blueprint, path, created_by, created_at FROM world_objects ORDER BY created_at, id`,
+    )
     .all() as ObjectSql[];
   return rows.flatMap((row) => {
     const object = mapObject(row);
@@ -918,8 +1019,8 @@ export function listWorldObjects(): WorldObject[] {
 
 export function insertWorldObject(object: WorldObject): void {
   db.prepare(
-    `INSERT INTO world_objects (id, type, x, z, rotation, style, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO world_objects (id, type, x, z, rotation, style, blueprint, path, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     object.id,
     object.type,
@@ -927,6 +1028,8 @@ export function insertWorldObject(object: WorldObject): void {
     object.z,
     object.rotation,
     object.style,
+    object.blueprint,
+    object.path,
     object.createdBy,
     object.createdAt,
   );
@@ -934,12 +1037,336 @@ export function insertWorldObject(object: WorldObject): void {
 
 export function updateWorldObject(object: WorldObject): void {
   db.prepare(
-    `UPDATE world_objects SET x = ?, z = ?, rotation = ?, style = ? WHERE id = ?`,
-  ).run(object.x, object.z, object.rotation, object.style, object.id);
+    `UPDATE world_objects SET x = ?, z = ?, rotation = ?, style = ?, blueprint = ?, path = ? WHERE id = ?`,
+  ).run(object.x, object.z, object.rotation, object.style, object.blueprint, object.path, object.id);
 }
 
 export function deleteWorldObject(id: string): void {
   db.prepare(`DELETE FROM world_objects WHERE id = ?`).run(id);
+}
+
+export function blueprintApprovalRequired(): boolean {
+  return getSetting("blueprint_approval") === "1";
+}
+
+export function setBlueprintApproval(required: boolean): void {
+  setSetting("blueprint_approval", required ? "1" : "0");
+}
+
+type BlueprintSql = {
+  name: string;
+  version: number;
+  spec: string;
+  status: string;
+  created_by: string;
+  created_at: string;
+};
+
+function mapBlueprint(row: BlueprintSql): BlueprintRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.spec);
+  } catch {
+    return null;
+  }
+  const checked = validateBlueprint(parsed);
+  if ("error" in checked) return null;
+  if (row.status !== "live" && row.status !== "pending" && row.status !== "archived") return null;
+  if (row.created_by !== "world" && row.created_by !== "pip") return null;
+  const record: BlueprintRecord = {
+    name: row.name,
+    version: row.version,
+    spec: checked.spec,
+    status: row.status,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+  return isBlueprintRecord(record) ? record : null;
+}
+
+export function listBlueprints(): BlueprintRecord[] {
+  const rows = db
+    .prepare(
+      `SELECT name, version, spec, status, created_by, created_at FROM blueprints ORDER BY name, version`,
+    )
+    .all() as BlueprintSql[];
+  return rows.flatMap((row) => {
+    const record = mapBlueprint(row);
+    return record ? [record] : [];
+  });
+}
+
+export function blueprintNamed(name: string, version: number): BlueprintRecord | null {
+  const row = db
+    .prepare(
+      `SELECT name, version, spec, status, created_by, created_at FROM blueprints WHERE name = ? AND version = ?`,
+    )
+    .get(name, version) as BlueprintSql | undefined;
+  return row ? mapBlueprint(row) : null;
+}
+
+export function latestBlueprint(name: string): BlueprintRecord | null {
+  const row = db
+    .prepare(
+      `SELECT name, version, spec, status, created_by, created_at FROM blueprints
+       WHERE name = ? ORDER BY version DESC LIMIT 1`,
+    )
+    .get(name) as BlueprintSql | undefined;
+  return row ? mapBlueprint(row) : null;
+}
+
+export function liveBlueprint(name: string): BlueprintRecord | null {
+  const row = db
+    .prepare(
+      `SELECT name, version, spec, status, created_by, created_at FROM blueprints
+       WHERE name = ? AND status = 'live' ORDER BY version DESC LIMIT 1`,
+    )
+    .get(name) as BlueprintSql | undefined;
+  return row ? mapBlueprint(row) : null;
+}
+
+export function insertBlueprint(
+  name: string,
+  version: number,
+  spec: string,
+  status: BlueprintStatus,
+  createdBy: "world" | "pip",
+  createdAt: string,
+): void {
+  db.prepare(
+    `INSERT INTO blueprints (name, version, spec, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(name, version, spec, status, createdBy, createdAt);
+}
+
+export function archiveLiveBlueprint(name: string): void {
+  db.prepare(`UPDATE blueprints SET status = 'archived' WHERE name = ? AND status = 'live'`).run(name);
+}
+
+export function setBlueprintStatus(name: string, version: number, status: BlueprintStatus): void {
+  db.prepare(`UPDATE blueprints SET status = ? WHERE name = ? AND version = ?`).run(status, name, version);
+}
+
+export function listPaths(): PathRecord[] {
+  const rows = db.prepare(`SELECT name, points FROM paths ORDER BY name`).all() as { name: string; points: string }[];
+  const paths: PathRecord[] = [];
+  for (const row of rows) {
+    if (!isBlueprintName(row.name)) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.points);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+    const points = parsed.flatMap((point) => {
+      if (!point || typeof point !== "object") return [];
+      const rowPoint = point as { x?: unknown; z?: unknown };
+      if (typeof rowPoint.x !== "number" || typeof rowPoint.z !== "number") return [];
+      return [{ x: rowPoint.x, z: rowPoint.z }];
+    });
+    if (points.length >= 2) paths.push({ name: row.name, points });
+  }
+  return paths;
+}
+
+export function savePath(name: string, points: { x: number; z: number }[]): void {
+  db.prepare(
+    `INSERT INTO paths (name, points, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET points = excluded.points, created_at = excluded.created_at`,
+  ).run(name, JSON.stringify(points), new Date().toISOString());
+}
+
+export type StudyRow = {
+  id: string;
+  topic: string;
+  why: string;
+  plannedTicks: number;
+  ticksDone: number;
+  notes: string;
+  status: "active" | "done";
+  createdAt: string;
+  updatedAt: string;
+};
+
+type StudySql = {
+  id: string;
+  topic: string;
+  why: string;
+  planned_ticks: number;
+  ticks_done: number;
+  notes: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapStudy(row: StudySql): StudyRow | null {
+  if (row.status !== "active" && row.status !== "done") return null;
+  return {
+    id: row.id,
+    topic: row.topic,
+    why: row.why,
+    plannedTicks: row.planned_ticks,
+    ticksDone: row.ticks_done,
+    notes: row.notes,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function listStudies(): StudyRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, topic, why, planned_ticks, ticks_done, notes, status, created_at, updated_at
+       FROM study_plans ORDER BY updated_at DESC`,
+    )
+    .all() as StudySql[];
+  return rows.flatMap((row) => {
+    const mapped = mapStudy(row);
+    return mapped ? [mapped] : [];
+  });
+}
+
+export function activeStudyCount(): number {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM study_plans WHERE status = 'active'`).get() as { n: number };
+  return row.n;
+}
+
+export function insertStudy(row: StudyRow): void {
+  db.prepare(
+    `INSERT INTO study_plans (id, topic, why, planned_ticks, ticks_done, notes, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(row.id, row.topic, row.why, row.plannedTicks, row.ticksDone, row.notes, row.status, row.createdAt, row.updatedAt);
+}
+
+export function saveStudy(row: StudyRow): void {
+  db.prepare(
+    `UPDATE study_plans SET notes = ?, ticks_done = ?, status = ?, updated_at = ? WHERE id = ?`,
+  ).run(row.notes, row.ticksDone, row.status, row.updatedAt, row.id);
+}
+
+export type NoteRow = {
+  id: string;
+  topic: string;
+  body: string;
+  sources: string;
+  createdAt: string;
+  touchedAt: string;
+  promptedAt: string | null;
+};
+
+export function insertNote(row: NoteRow): void {
+  db.prepare(
+    `INSERT INTO notes (id, topic, body, sources, created_at, touched_at, prompted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(row.id, row.topic, row.body, row.sources, row.createdAt, row.touchedAt, row.promptedAt);
+  db.prepare(`UPDATE notes SET touched_at = ? WHERE lower(topic) = lower(?)`).run(row.touchedAt, row.topic);
+}
+
+export function countNotes(): number {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM notes`).get() as { n: number };
+  return row.n;
+}
+
+export function searchNoteRows(topic: string): NoteRow[] {
+  const like = `%${topic.slice(0, 80).replaceAll("%", "").replaceAll("_", "")}%`;
+  const rows = db
+    .prepare(
+      `SELECT id, topic, body, sources, created_at, touched_at, prompted_at FROM notes
+       WHERE topic LIKE ? OR body LIKE ? ORDER BY touched_at DESC LIMIT 8`,
+    )
+    .all(like, like) as NoteSql[];
+  return rows.map(mapNote);
+}
+
+type NoteSql = {
+  id: string;
+  topic: string;
+  body: string;
+  sources: string;
+  created_at: string;
+  touched_at: string;
+  prompted_at: string | null;
+};
+
+function mapNote(row: NoteSql): NoteRow {
+  return {
+    id: row.id,
+    topic: row.topic,
+    body: row.body,
+    sources: row.sources,
+    createdAt: row.created_at,
+    touchedAt: row.touched_at,
+    promptedAt: row.prompted_at,
+  };
+}
+
+export function notesMatchingTopics(topics: string[]): NoteRow[] {
+  if (topics.length === 0) return [];
+  const rows = db
+    .prepare(`SELECT id, topic, body, sources, created_at, touched_at, prompted_at FROM notes ORDER BY touched_at DESC LIMIT 40`)
+    .all() as NoteSql[];
+  const wanted = topics.map((topic) => topic.toLowerCase());
+  return rows
+    .map(mapNote)
+    .filter((note) => {
+      const topic = note.topic.toLowerCase();
+      return wanted.some((item) => topic.includes(item) || item.includes(topic));
+    })
+    .slice(0, 5);
+}
+
+export function staleNotes(untouchedBefore: string, promptedBefore: string): NoteRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, topic, body, sources, created_at, touched_at, prompted_at FROM notes
+       WHERE touched_at <= ? AND (prompted_at IS NULL OR prompted_at <= ?)
+       ORDER BY touched_at ASC LIMIT 3`,
+    )
+    .all(untouchedBefore, promptedBefore) as NoteSql[];
+  return rows.map(mapNote);
+}
+
+export function markNotesPrompted(ids: string[], at: string): void {
+  if (ids.length === 0) return;
+  const statement = db.prepare(`UPDATE notes SET prompted_at = ? WHERE id = ?`);
+  const tx = db.transaction(() => {
+    for (const id of ids) statement.run(at, id);
+  });
+  tx();
+}
+
+export function noteTopicsSince(iso: string): string[] {
+  const rows = db.prepare(`SELECT DISTINCT topic FROM notes WHERE created_at >= ?`).all(iso) as { topic: string }[];
+  return rows.map((row) => row.topic);
+}
+
+export function studyTopicsSince(iso: string): string[] {
+  const rows = db.prepare(`SELECT DISTINCT topic FROM study_plans WHERE updated_at >= ?`).all(iso) as { topic: string }[];
+  return rows.map((row) => row.topic);
+}
+
+export function browseQueriesSince(iso: string): string[] {
+  const rows = db
+    .prepare(`SELECT payload FROM events WHERE kind = 'browse' AND created_at >= ? ORDER BY created_at DESC`)
+    .all(iso) as { payload: string }[];
+  const queries: string[] = [];
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.payload) as { query?: unknown };
+      if (typeof payload.query === "string" && payload.query.trim()) queries.push(payload.query.trim());
+    } catch {
+      continue;
+    }
+  }
+  return queries;
+}
+
+export function diaryBetween(startIso: string, endIso: string): { tick: number; body: string }[] {
+  return db
+    .prepare(`SELECT tick, body FROM diary WHERE created_at >= ? AND created_at < ? ORDER BY created_at`)
+    .all(startIso, endIso) as { tick: number; body: string }[];
 }
 
 export function markAllDiaryRead(): string | null {

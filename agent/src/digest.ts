@@ -12,7 +12,7 @@ import {
   saveDigest,
   setSetting,
 } from "./db.js";
-import { CapError, LlmError, speak } from "./llm.js";
+import { CapError, LlmError, reflectModel, speak } from "./llm.js";
 import { readMemory } from "./memory.js";
 import { digestLink, notifyDigest } from "./notify.js";
 import { callsLeft, noteCall, noteTokens, tokensLeft } from "./usage.js";
@@ -82,6 +82,8 @@ function eventLine(event: WorldEvent): string | null {
       if (event.payload.action === "move") return `Built: moved a ${name}.`;
       return `Built: removed a ${name}.`;
     }
+    case "blueprint":
+      return `Blueprint ${event.payload.name} version ${event.payload.version} (${event.payload.status}).`;
     default:
       return null;
   }
@@ -176,7 +178,7 @@ function parseDigest(text: string, day: number): { headline: string; sections: D
 async function ask(day: number): Promise<{ headline: string; sections: DigestSections }> {
   const notes = sourceNotes(day);
   const spend = meter();
-  const first = await speak(DIGEST_PROMPT, [{ role: "user", content: notes }], spend, 900);
+  const first = await speak(DIGEST_PROMPT, [{ role: "user", content: notes }], spend, 900, reflectModel());
   try {
     return parseDigest(first, day);
   } catch {
@@ -189,6 +191,7 @@ async function ask(day: number): Promise<{ headline: string; sections: DigestSec
       ],
       spend,
       900,
+      reflectModel(),
     );
     return parseDigest(second, day);
   }

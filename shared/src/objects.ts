@@ -31,11 +31,15 @@ export type BuildAction = "add" | "move" | "remove";
 
 export type WorldObject = {
   id: string;
-  type: PlaceType;
+  type: string;
   x: number;
   z: number;
   rotation: number;
   style: string;
+  /** Blueprint name. Null for the houses, which stay hand-built. */
+  blueprint: string | null;
+  /** Named path used when the blueprint behaviour is follow_path. */
+  path: string | null;
   createdBy: "world" | "pip";
   createdAt: string;
 };
@@ -68,20 +72,22 @@ export function isPlaceType(type: string): type is PlaceType {
   return type in FOOTPRINT;
 }
 
-export function footprintOf(type: PlaceType): number {
-  return FOOTPRINT[type];
+export function footprintOf(type: string): number {
+  if (isPlaceType(type)) return FOOTPRINT[type];
+  return 0.8;
 }
 
-export function insideWorld(x: number, z: number, type: PlaceType): boolean {
-  return Math.hypot(x, z) + footprintOf(type) <= WORLD_RADIUS;
+export function insideWorld(x: number, z: number, type: string, radius = footprintOf(type)): boolean {
+  return Math.hypot(x, z) + radius <= WORLD_RADIUS;
 }
 
 export function overlaps(
-  a: { x: number; z: number; type: PlaceType },
-  b: { x: number; z: number; type: PlaceType },
+  a: { x: number; z: number; type: string },
+  b: { x: number; z: number; type: string },
+  radiusA = footprintOf(a.type),
+  radiusB = footprintOf(b.type),
 ): boolean {
-  const gap = Math.hypot(a.x - b.x, a.z - b.z);
-  return gap < footprintOf(a.type) + footprintOf(b.type) - 0.05;
+  return Math.hypot(a.x - b.x, a.z - b.z) < radiusA + radiusB - 0.05;
 }
 
 function mulberry32(seed: number): () => number {
@@ -110,6 +116,8 @@ export function starterObjects(): WorldObject[] {
       z: round2(z),
       rotation: Math.atan2(-x, -z),
       style: "",
+      blueprint: null,
+      path: null,
       createdBy: "world" as const,
       createdAt: SEED_AT,
     };
@@ -141,6 +149,8 @@ export function starterObjects(): WorldObject[] {
       z: round2(spec.z),
       rotation: spec.rotation,
       style: `${crown}:${spec.scale.toFixed(3)}:${slot}`,
+      blueprint: "tree",
+      path: null,
       createdBy: "world",
       createdAt: SEED_AT,
     });
@@ -152,9 +162,13 @@ export function isWorldObject(value: unknown): value is WorldObject {
   if (!value || typeof value !== "object") return false;
   const row = value as Partial<WorldObject>;
   if (typeof row.id !== "string" || typeof row.type !== "string") return false;
-  if (!isPlaceType(row.type)) return false;
+  if (!/^[a-z][a-z0-9_]{0,31}$/.test(row.type)) return false;
   if (typeof row.x !== "number" || typeof row.z !== "number") return false;
   if (typeof row.rotation !== "number" || typeof row.style !== "string") return false;
+  if (!(row.blueprint === null || (typeof row.blueprint === "string" && /^[a-z][a-z0-9_]{0,31}$/.test(row.blueprint)))) {
+    return false;
+  }
+  if (!(row.path === null || (typeof row.path === "string" && /^[a-z][a-z0-9_]{0,31}$/.test(row.path)))) return false;
   if (row.createdBy !== "world" && row.createdBy !== "pip") return false;
   if (typeof row.createdAt !== "string") return false;
   return true;

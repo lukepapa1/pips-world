@@ -1,12 +1,17 @@
 import {
+  isBlueprintRecord,
   isBuildingId,
+  isPathRecord,
   isWorldEvent,
   isWorldObject,
   isWorldState,
+  type BlueprintRecord,
   type BuildingId,
   type DiaryRow,
   type DigestRow,
   type JournalRow,
+  type GrowthView,
+  type PathRecord,
   type RequestRow,
   type SnapshotMessage,
   type WorldEvent,
@@ -31,6 +36,10 @@ export type ClientState = {
   world: WorldState | null;
   browsing: string | null;
   objects: WorldObject[];
+  blueprints: BlueprintRecord[];
+  paths: PathRecord[];
+  blueprintApproval: boolean;
+  growth: GrowthView | null;
 };
 
 const listeners = new Set<(state: ClientState) => void>();
@@ -50,6 +59,10 @@ let state: ClientState = {
   world: null,
   browsing: null,
   objects: [],
+  blueprints: [],
+  paths: [],
+  blueprintApproval: false,
+  growth: null,
 };
 
 export function getState(): ClientState {
@@ -95,7 +108,28 @@ export function loadSnapshot(message: SnapshotMessage): void {
     world: isWorldState(message.world) ? message.world : state.world,
     browsing: null,
     objects: Array.isArray(message.objects) ? message.objects.filter(isWorldObject) : state.objects,
+    blueprints: Array.isArray(message.blueprints) ? message.blueprints.filter(isBlueprintRecord) : [],
+    paths: Array.isArray(message.paths) ? message.paths.filter(isPathRecord) : [],
+    blueprintApproval: message.blueprintApproval === true,
+    growth: message.growth ?? state.growth,
   });
+}
+
+export function setGrowth(growth: GrowthView): void {
+  commit({ ...state, growth, placement: "none" });
+}
+
+export function setBlueprints(blueprints: BlueprintRecord[], blueprintApproval: boolean): void {
+  commit({
+    ...state,
+    blueprints: blueprints.filter(isBlueprintRecord),
+    blueprintApproval,
+    placement: "none",
+  });
+}
+
+export function setPaths(paths: PathRecord[]): void {
+  commit({ ...state, paths: paths.filter(isPathRecord), placement: "none" });
 }
 
 export function setWorldObjects(objects: WorldObject[]): void {
@@ -171,6 +205,7 @@ export function applyEvent(event: WorldEvent): void {
     case "chat":
     case "browse":
     case "build":
+    case "blueprint":
       break;
   }
 

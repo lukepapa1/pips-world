@@ -1,10 +1,14 @@
 import {
+  isBlueprintRecord,
   isDigestRow,
+  isPathRecord,
   isWorldEvent,
   isWorldObject,
   isWorldState,
+  type BlueprintRecord,
   type ClientMessage,
   type DigestRow,
+  type PathRecord,
   type ServerMessage,
   type WorldEvent,
 } from "@pips/shared";
@@ -13,8 +17,11 @@ import {
   loadSnapshot,
   markDigestReadLocal,
   markDiaryRead,
+  setBlueprints,
   setBrowsing,
+  setGrowth,
   setConnected,
+  setPaths,
   setWorldObjects,
   setWorldState,
   upsertDigest,
@@ -25,6 +32,8 @@ let haveSnapshot = false;
 let queue: WorldEvent[] = [];
 let digestQueue: DigestRow[] = [];
 let objectQueue: ServerMessage | null = null;
+let blueprintQueue: { blueprints: BlueprintRecord[]; blueprintApproval: boolean } | null = null;
+let pathQueue: PathRecord[] | null = null;
 let reconnectTimer = 0;
 
 export function send(message: ClientMessage): boolean {
@@ -70,6 +79,26 @@ export function connect(): void {
       for (const digest of pendingDigests) upsertDigest(digest);
       if (objectQueue?.type === "world_objects") setWorldObjects(objectQueue.objects.filter(isWorldObject));
       objectQueue = null;
+      if (blueprintQueue) setBlueprints(blueprintQueue.blueprints, blueprintQueue.blueprintApproval);
+      blueprintQueue = null;
+      if (pathQueue) setPaths(pathQueue);
+      pathQueue = null;
+      return;
+    }
+    if (message.type === "blueprints") {
+      const blueprints = message.blueprints.filter(isBlueprintRecord);
+      if (!haveSnapshot) blueprintQueue = { blueprints, blueprintApproval: message.blueprintApproval };
+      else setBlueprints(blueprints, message.blueprintApproval);
+      return;
+    }
+    if (message.type === "growth") {
+      setGrowth(message.growth);
+      return;
+    }
+    if (message.type === "paths") {
+      const paths = message.paths.filter(isPathRecord);
+      if (!haveSnapshot) pathQueue = paths;
+      else setPaths(paths);
       return;
     }
     if (message.type === "world_objects") {

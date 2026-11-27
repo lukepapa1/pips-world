@@ -1,6 +1,35 @@
-import type { BuildAction, BuildableType, WorldObject } from "./objects.js";
+import type { BlueprintRecord, PathRecord } from "./blueprint.js";
+import type { GrowthPace, GrowthView } from "./growth.js";
+import type { BuildAction, WorldObject } from "./objects.js";
 
 export type { BuildAction, BuildableType, PlaceType, WorldObject } from "./objects.js";
+export type {
+  BlueprintBehaviour,
+  BlueprintPrimitive,
+  BlueprintRecord,
+  BlueprintSpec,
+  BlueprintStatus,
+  PathPoint,
+  PathRecord,
+  PrimitiveShape,
+  Vec3,
+} from "./blueprint.js";
+export {
+  BEHAVIOURS,
+  MAX_PRIMITIVES,
+  PRIMITIVES,
+  footprintOfSpec,
+  isBlueprintName,
+  isBlueprintRecord,
+  isPathRecord,
+  liveSpec,
+  resolveSpec,
+  styleParameters,
+  validateBlueprint,
+} from "./blueprint.js";
+export { STARTER_BLUEPRINTS } from "./catalogue.js";
+export type { GrowthPace, GrowthPlanView, GrowthSlot, GrowthView } from "./growth.js";
+export { GROWTH_PACES, isGrowthPace } from "./growth.js";
 export {
   BUILDABLE,
   BUILDING_SLOTS,
@@ -187,11 +216,20 @@ export type WorldEvent =
       payload: {
         action: BuildAction;
         objectId: string;
-        type: BuildableType;
+        type: string;
         x: number;
         z: number;
         rotation: number;
         style: string;
+      };
+    })
+  | (EventBase & {
+      kind: "blueprint";
+      payload: {
+        action: "design" | "preview" | "rollback" | "approve";
+        name: string;
+        version: number;
+        status: "live" | "pending" | "archived";
       };
     });
 
@@ -261,6 +299,10 @@ export type SnapshotMessage = {
   day: number;
   world: WorldState;
   objects: WorldObject[];
+  blueprints: BlueprintRecord[];
+  paths: PathRecord[];
+  blueprintApproval: boolean;
+  growth: GrowthView;
 };
 
 export type ServerMessage =
@@ -272,6 +314,9 @@ export type ServerMessage =
   | { type: "digest_read"; id: string; readAt: string }
   | { type: "browsing"; domain: string | null }
   | { type: "world_objects"; objects: WorldObject[] }
+  | { type: "blueprints"; blueprints: BlueprintRecord[]; blueprintApproval: boolean }
+  | { type: "paths"; paths: PathRecord[] }
+  | { type: "growth"; growth: GrowthView }
   | { type: "error"; message: string };
 
 export type ClientMessage =
@@ -279,7 +324,14 @@ export type ClientMessage =
   | { type: "set_paused"; paused: boolean }
   | { type: "mark_diary_read" }
   | { type: "mark_digest_read"; id: string }
-  | { type: "set_season_preview"; season: SeasonPreview };
+  | { type: "set_season_preview"; season: SeasonPreview }
+  | { type: "set_blueprint_approval"; required: boolean }
+  | { type: "rollback_blueprint"; name: string; version: number }
+  | { type: "approve_blueprint"; name: string; version: number }
+  | { type: "set_growth_pace"; pace: GrowthPace }
+  | { type: "set_awake_hours"; start: number; end: number }
+  | { type: "set_read_cap"; cap: number }
+  | { type: "end_study"; id: string };
 
 const EVENT_KINDS = new Set([
   "move",
@@ -293,6 +345,7 @@ const EVENT_KINDS = new Set([
   "chat",
   "browse",
   "build",
+  "blueprint",
 ]);
 
 export function isWorldEvent(value: unknown): value is WorldEvent {
