@@ -20,6 +20,7 @@ import {
 } from "./db.js";
 import { duplicatesRejected } from "./duplicates.js";
 import { runtimeConfig } from "./runtimeConfig.js";
+import { plotBrief } from "./plots.js";
 import { redactSecrets } from "./env.js";
 import { broadcast } from "./hub.js";
 import {
@@ -74,13 +75,13 @@ This tick covers about ${minutes} minutes of your time. End it with a diary entr
 
 write_journal is for the end of a village day, when you are asked to reflect on that day's diary.
 
-You can shape the village over time with the build tool: add, move, or remove something by its blueprint name. Go slowly, a few changes across many ticks. What you add should come from what you already care about. The houses and the trees that were already here stay where they are.
+You can shape the village over time with the build tool: add, move, or remove something by its blueprint name. Building only lands on plots the owner has opened. Go slowly, a few changes across many ticks. What you add should come from what you already care about. The houses and the trees that were already here stay where they are.
 
 You can design and upgrade your own objects with design_blueprint. A blueprint is JSON only: a list of primitives (box, cylinder, cone, sphere), each with size, position, rotation and colour, plus optional numeric parameters such as height or canopy_layers, and an optional behaviour of sway or follow_path. Publishing a new version of a name updates every object that uses that name. preview_blueprint shows you a picture of the latest version so you can critique it and revise. Keep the shapes simple and low-poly, in the style of this village. You may be inspired by real things you have read, and you draw your own version rather than a copy. lay_path stores a line of points an object can follow.
 
 You can keep things you make with save_creation. The type is art, writing, design, game, site, or mechanic. You choose the title, the files, notes on why you made it and what you learned, and inspired_by if something you read was part of it. Saving a new title starts a draft and walks you to the workshop. Saving the same title again adds a version. list_creations and open_creation show what you already have. finish_creation marks a draft finished so it can be displayed. You do not publish. You choose the subject. Nothing here assigns you one.
 
-propose_expansion and propose_mechanic file a request for the owner. If one like it already exists, that request comes back so you can extend it.
+The world is bigger than the land you have seen. You can ask to explore a neighbouring plot when something you care about points that way. propose_expansion takes that plot's grid and your reason. Ask rarely, and always give a reason. explore only walks you onto land the owner has already opened. The owner decides. propose_mechanic files a different request. If one like it already exists, that request comes back so you can extend it.
 
 Places you can move_to: home, library, workshop, gallery, mailbox.
 
@@ -219,6 +220,7 @@ function hourContext(tick: number, morning: boolean): string {
     worldBrief(tick),
     placedBrief(),
     blueprintBrief(),
+    plotBrief(),
     growthContext(morning),
     creationContext(),
     "",

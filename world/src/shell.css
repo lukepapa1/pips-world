@@ -43,7 +43,82 @@ button { min-height: 44px; }
   pointer-events: none;
 }
 
-#hud button, #status-pill, #chat-fab, #tabbar, #connection-error { pointer-events: auto; }
+#hud button, #status-pill, #chat-fab, #tabbar, #connection-error, #world-tools, #plot-map { pointer-events: auto; }
+
+#world-tools {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  bottom: calc(68px + env(safe-area-inset-bottom));
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+body:not([data-tab="world"]) #world-tools,
+body:not([data-tab="world"]) #plot-map {
+  display: none !important;
+}
+
+#open-map, #quality {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 14px;
+  background: color-mix(in srgb, var(--paper-raised) 88%, transparent);
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--line) 70%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+#plot-map {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  bottom: calc(168px + env(safe-area-inset-bottom));
+  z-index: 7;
+  width: 244px;
+  padding: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(42, 36, 28, 0.12);
+}
+
+#plot-map[hidden] { display: none !important; }
+
+#plot-map header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+#plot-map h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+#plot-map canvas {
+  display: block;
+  width: 220px;
+  height: 220px;
+  border-radius: 12px;
+}
+
+.plot-mark {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 84%, transparent);
+  color: var(--ink);
+  font: 600 14px Nunito, sans-serif;
+  border: 1px solid var(--line);
+  pointer-events: none;
+}
 
 #open-settings, #hud-inbox, .chat-fab {
   width: 44px;

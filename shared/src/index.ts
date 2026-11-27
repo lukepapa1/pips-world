@@ -2,6 +2,7 @@ import type { BlueprintRecord, PathRecord } from "./blueprint.js";
 import type { CreationsLibrary } from "./creations.js";
 import type { GrowthPace, GrowthView } from "./growth.js";
 import type { BuildAction, WorldObject } from "./objects.js";
+import type { PlotRecord } from "./plots.js";
 
 export type { BuildAction, BuildableType, PlaceType, WorldObject } from "./objects.js";
 export type {
@@ -62,6 +63,30 @@ export {
   overlaps,
   starterObjects,
 } from "./objects.js";
+export type { PlotRecord, PlotStatus, Terrain, TerrainSample } from "./plots.js";
+export {
+  PLOT_SIZE,
+  PLOT_STATUSES,
+  STARTING_PLOTS,
+  TERRAINS,
+  approachPoint,
+  compassName,
+  exploreTitle,
+  footprintInside,
+  isPlotRecord,
+  isStartingPlot,
+  landWord,
+  parsePlotArg,
+  placeName,
+  plotBounds,
+  plotCenter,
+  plotId,
+  plotIndex,
+  plotNeighbors,
+  plotSeed,
+  terrainOf,
+  terrainSample,
+} from "./plots.js";
 
 export const BUILDINGS = ["home", "library", "workshop", "gallery", "mailbox"] as const;
 
@@ -253,6 +278,19 @@ export type WorldEvent =
   | (EventBase & {
       kind: "creation_started" | "creation_updated" | "creation_finished";
       payload: { creationId: string; type: string; title: string; version: number };
+    })
+  | (EventBase & {
+      kind: "plot";
+      payload: {
+        action: "unlocked" | "explored";
+        plotId: string;
+        gridX: number;
+        gridZ: number;
+        terrain: string;
+        name: string;
+        x: number;
+        z: number;
+      };
     });
 
 export type BrowseTool = "web_search" | "read_page" | "view_image";
@@ -326,6 +364,7 @@ export type SnapshotMessage = {
   blueprintApproval: boolean;
   growth: GrowthView;
   creations: CreationsLibrary;
+  plots: PlotRecord[];
 };
 
 export type ServerMessage =
@@ -341,6 +380,7 @@ export type ServerMessage =
   | { type: "paths"; paths: PathRecord[] }
   | { type: "growth"; growth: GrowthView }
   | { type: "creations"; creations: CreationsLibrary }
+  | { type: "plots"; plots: PlotRecord[] }
   | { type: "error"; message: string };
 
 export type ClientMessage =
@@ -381,6 +421,7 @@ const EVENT_KINDS = new Set([
   "creation_started",
   "creation_updated",
   "creation_finished",
+  "plot",
 ]);
 
 export function isWorldEvent(value: unknown): value is WorldEvent {

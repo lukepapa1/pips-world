@@ -11,6 +11,8 @@ import { createSeasonFx } from "./seasonFx";
 import { createPip } from "./pip";
 import { loadQuality, saveQuality, type Quality } from "./quality";
 import { actionOf, createVillage, type WorldAction } from "./village";
+import { createPlots } from "./plots";
+import { notePip } from "../plotMap";
 
 export type SceneHandle = {
   sync(state: ClientState): void;
@@ -25,7 +27,7 @@ export function mountScene(
 ): SceneHandle {
   const scene = new THREE.Scene();
 
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 220);
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
   camera.position.set(13, 15, 15);
 
   let quality = loadQuality();
@@ -51,6 +53,7 @@ export function mountScene(
   const atmosphere = createAtmosphere(scene, renderer);
   atmosphere.setQuality(quality);
   const village = createVillage(scene, quality);
+  const plots = createPlots(scene);
   const life = createLife(scene);
   life.setQuality(quality);
   const seasonFx = createSeasonFx(scene, quality);
@@ -86,7 +89,7 @@ export function mountScene(
   controls.dampingFactor = 0.08;
   controls.enablePan = false;
   controls.minDistance = 8;
-  controls.maxDistance = 34;
+  controls.maxDistance = 64;
   controls.minPolarAngle = 0.35;
   controls.maxPolarAngle = Math.PI / 2.15;
   controls.rotateSpeed = 0.7;
@@ -117,17 +120,17 @@ export function mountScene(
       camera.fov = 50;
       camera.position.set(20, 33, 24);
       controls.minDistance = 5;
-      controls.maxDistance = 52;
+      controls.maxDistance = 64;
     } else if (aspect < 0.85) {
       camera.fov = 48;
       camera.position.set(14, 24, 16);
       controls.minDistance = 5;
-      controls.maxDistance = 44;
+      controls.maxDistance = 64;
     } else {
       camera.fov = 40;
       camera.position.set(14, 13, 16);
       controls.minDistance = 4;
-      controls.maxDistance = 36;
+      controls.maxDistance = 64;
     }
     controls.target.set(0, 0.2, 0);
     camera.updateProjectionMatrix();
@@ -269,6 +272,10 @@ export function mountScene(
     }
     if (chatting) pip.aim(camera.position);
     pip.update(dt);
+    const pipAt = new THREE.Vector3();
+    pip.group.getWorldPosition(pipAt);
+    plots.update(dt, camera, pipAt, quality, atmosphere.look.weights);
+    notePip(pipAt.x, pipAt.z);
     controls.update();
     renderer.render(scene, camera);
     labels.render(scene, camera);
@@ -290,12 +297,16 @@ export function mountScene(
     village.dressLabels(camera);
   }
 
-  function showShot(angle: "village" | "studio" | "gallery", time: "dawn" | "noon" | "night"): void {
+  function showShot(angle: "village" | "studio" | "gallery" | "expand", time: "dawn" | "noon" | "night"): void {
     const hours = time === "dawn" ? 6.15 : time === "night" ? 21.6 : 13;
     atmosphere.holdHours(hours);
     framed = true;
     controls.minDistance = 3;
-    if (angle === "village") {
+    controls.maxDistance = 80;
+    if (angle === "expand") {
+      camera.position.set(4, 14, 4);
+      controls.target.set(18, 0.6, 18);
+    } else if (angle === "village") {
       camera.position.set(9.2, 8.2, 11.6);
       controls.target.set(-0.4, 0.8, -1.4);
     } else {
@@ -338,6 +349,7 @@ export function mountScene(
       village.setBrowsing(state.browsing !== null);
       village.syncObjects(state.objects, state.blueprints, state.paths);
       village.syncCreations(state.creations?.items ?? []);
+      plots.sync(state.plots);
       if (state.world) atmosphere.setWorld(state.world);
       if (!primedFinished) {
         for (const event of state.events) {
@@ -351,7 +363,16 @@ export function mountScene(
           carryUntil = performance.now() + 4800;
         }
       }
-      if (state.placement === "none" || !state.pipAt) return;
+      if (state.placement === "none") return;
+      if (state.wander) {
+        const point = new THREE.Vector3(state.wander.x, 0, state.wander.z);
+        const face = new THREE.Vector3(state.wander.x, 0, state.wander.z + 1);
+        goal = null;
+        if (state.placement === "jump") pip.placeAt(point, face);
+        else pip.walkTo(point, face);
+        return;
+      }
+      if (!state.pipAt) return;
       homeGoal = state.pipAt;
       if (carrying) return;
       sendPip(state.pipAt, state.placement === "jump");

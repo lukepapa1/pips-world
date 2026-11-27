@@ -90,6 +90,11 @@ function eventLine(event: WorldEvent): string | null {
       return `Saved version ${event.payload.version} of “${event.payload.title}”.`;
     case "creation_finished":
       return `Finished “${event.payload.title}”.`;
+    case "plot":
+      if (event.payload.action === "unlocked") {
+        return `Built: ${event.payload.name} opened (${event.payload.terrain}).`;
+      }
+      return null;
     default:
       return null;
   }

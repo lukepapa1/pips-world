@@ -29,6 +29,16 @@ import {
   type BlueprintRecord,
   type BlueprintStatus,
   type PathRecord,
+  type PlotRecord,
+  STARTING_PLOTS,
+  footprintInside,
+  isPlotRecord,
+  isStartingPlot,
+  placeName,
+  plotId,
+  plotNeighbors,
+  plotSeed,
+  terrainOf,
 } from "@pips/shared";
 import { sqliteFile } from "./env.js";
 import { runtimeConfig } from "./runtimeConfig.js";
@@ -68,7 +78,7 @@ function migrate(): void {
     CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL CHECK (kind IN (
-        'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint', 'creation_started', 'creation_updated', 'creation_finished'
+        'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint', 'creation_started', 'creation_updated', 'creation_finished', 'plot'
       )),
       tick INTEGER NOT NULL,
       day INTEGER NOT NULL,
@@ -260,6 +270,19 @@ function migrate(): void {
       at TEXT NOT NULL,
       PRIMARY KEY (kind, key)
     );
+
+    CREATE TABLE IF NOT EXISTS plots (
+      id TEXT PRIMARY KEY,
+      grid_x INTEGER NOT NULL,
+      grid_z INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      seed INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('mist', 'proposed', 'unlocked')),
+      unlocked_at TEXT,
+      name TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      UNIQUE (grid_x, grid_z)
+    );
   `);
   ensureDiaryHidden();
   db.prepare(
@@ -270,6 +293,7 @@ function migrate(): void {
   ensureObjectColumns();
   seedWorld();
   seedBlueprints();
+  seedPlots();
   db.prepare(
     `INSERT INTO settings (key, value) VALUES ('blueprint_approval', '0')
      ON CONFLICT(key) DO NOTHING`,
@@ -288,13 +312,13 @@ function widenEventKinds(): void {
   const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'`).get() as
     | { sql: string }
     | undefined;
-  if (!row || row.sql.includes("'creation_finished'")) return;
+  if (!row || row.sql.includes("'plot'")) return;
   const tx = db.transaction(() => {
     db.exec(`
       CREATE TABLE events_next (
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN (
-          'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint', 'creation_started', 'creation_updated', 'creation_finished'
+          'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint', 'creation_started', 'creation_updated', 'creation_finished', 'plot'
         )),
         tick INTEGER NOT NULL,
         day INTEGER NOT NULL,
@@ -797,6 +821,7 @@ function persist(event: WorldEvent): void {
     case "creation_started":
     case "creation_updated":
     case "creation_finished":
+    case "plot":
       break;
   }
 }
@@ -1205,6 +1230,133 @@ function seedWorld(): void {
         object.createdBy,
         object.createdAt,
       );
+    }
+  });
+  tx();
+}
+
+type PlotSql = {
+  id: string;
+  grid_x: number;
+  grid_z: number;
+  type: string;
+  seed: number;
+  status: string;
+  unlocked_at: string | null;
+  name: string;
+  notes: string;
+};
+
+function mapPlot(row: PlotSql): PlotRecord | null {
+  const plot = {
+    id: row.id,
+    gridX: row.grid_x,
+    gridZ: row.grid_z,
+    type: row.type,
+    seed: row.seed,
+    status: row.status,
+    unlockedAt: row.unlocked_at,
+    name: row.name,
+    notes: row.notes,
+  };
+  return isPlotRecord(plot) ? plot : null;
+}
+
+function insertPlot(plot: PlotRecord): void {
+  db.prepare(
+    `INSERT INTO plots (id, grid_x, grid_z, type, seed, status, unlocked_at, name, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    plot.id,
+    plot.gridX,
+    plot.gridZ,
+    plot.type,
+    plot.seed,
+    plot.status,
+    plot.unlockedAt,
+    plot.name,
+    plot.notes,
+  );
+}
+
+function mistRow(gridX: number, gridZ: number): PlotRecord {
+  const seed = plotSeed(gridX, gridZ);
+  const type = isStartingPlot(gridX, gridZ) ? "meadow" : terrainOf(seed);
+  return {
+    id: plotId(gridX, gridZ),
+    gridX,
+    gridZ,
+    type,
+    seed,
+    status: "mist",
+    unlockedAt: null,
+    name: placeName(gridX, gridZ, type),
+    notes: "",
+  };
+}
+
+function ensureMistFrontier(): void {
+  const rows = listPlots();
+  const have = new Set(rows.map((plot) => plot.id));
+  for (const plot of rows) {
+    if (plot.status !== "unlocked") continue;
+    for (const [gridX, gridZ] of plotNeighbors(plot.gridX, plot.gridZ)) {
+      const id = plotId(gridX, gridZ);
+      if (have.has(id)) continue;
+      insertPlot(mistRow(gridX, gridZ));
+      have.add(id);
+    }
+  }
+}
+
+function seedPlots(): void {
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM plots`).get() as { n: number };
+  if (count.n > 0) return;
+  const tx = db.transaction(() => {
+    for (const [gridX, gridZ] of STARTING_PLOTS) {
+      const row = mistRow(gridX, gridZ);
+      insertPlot({ ...row, status: "unlocked", unlockedAt: "2020-01-01T00:00:00.000Z", name: "Village" });
+    }
+    ensureMistFrontier();
+  });
+  tx();
+}
+
+export function listPlots(): PlotRecord[] {
+  const rows = db
+    .prepare(
+      `SELECT id, grid_x, grid_z, type, seed, status, unlocked_at, name, notes
+       FROM plots ORDER BY grid_z, grid_x`,
+    )
+    .all() as PlotSql[];
+  return rows.flatMap((row) => {
+    const plot = mapPlot(row);
+    return plot ? [plot] : [];
+  });
+}
+
+export function savePlot(plot: PlotRecord): void {
+  db.prepare(
+    `UPDATE plots SET type = ?, status = ?, unlocked_at = ?, name = ?, notes = ? WHERE id = ?`,
+  ).run(plot.type, plot.status, plot.unlockedAt, plot.name, plot.notes, plot.id);
+}
+
+export function openFrontier(): void {
+  ensureMistFrontier();
+}
+
+/** Drop every plot that was not part of the village, and anything Pip built outside it. */
+export function resetLaunchPlots(): void {
+  const tx = db.transaction(() => {
+    const keep = STARTING_PLOTS.map(([gridX, gridZ]) => plotId(gridX, gridZ));
+    db.prepare(`DELETE FROM plots WHERE id NOT IN (${keep.map(() => "?").join(", ")})`).run(...keep);
+    ensureMistFrontier();
+    for (const object of listWorldObjects()) {
+      if (object.createdBy !== "pip") continue;
+      const home = STARTING_PLOTS.some(([gridX, gridZ]) =>
+        footprintInside(gridX, gridZ, object.x, object.z, 0),
+      );
+      if (!home) deleteWorldObject(object.id);
     }
   });
   tx();

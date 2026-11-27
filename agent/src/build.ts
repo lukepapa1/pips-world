@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import {
   footprintOf,
   footprintOfSpec,
-  insideWorld,
   isBlueprintName,
   overlaps,
   type WorldEvent,
@@ -18,6 +17,7 @@ import {
   updateWorldObject,
 } from "./db.js";
 import { noteDuplicate } from "./duplicates.js";
+import { canBuildAt } from "./plots.js";
 import { broadcast } from "./hub.js";
 import type { ToolOutcome } from "./tools.js";
 import { buildCap, buildsLeft, noteBuild } from "./usage.js";
@@ -117,7 +117,7 @@ function addObject(
   tick: number,
 ): ToolOutcome {
   const radius = radiusOf({ type, blueprint: type });
-  if (!insideWorld(x, z, type, radius)) return { result: "That spot is outside the village.", kind: null };
+  if (!canBuildAt(x, z, radius)) return { result: "That spot is not on open land.", kind: null };
   const twin = objects.find((object) => object.type === type && Math.hypot(object.x - x, object.z - z) < 1.5);
   if (twin) {
     noteDuplicate();
@@ -160,7 +160,7 @@ function moveObject(
     return { result: "The houses and the trees that were already here stay where they are.", kind: null };
   }
   const radius = radiusOf(target);
-  if (!insideWorld(x, z, target.type, radius)) return { result: "That spot is outside the village.", kind: null };
+  if (!canBuildAt(x, z, radius)) return { result: "That spot is not on open land.", kind: null };
   const blocked = objects.some(
     (object) => object.id !== target.id && overlaps({ x, z, type: target.type }, object, radius, radiusOf(object)),
   );

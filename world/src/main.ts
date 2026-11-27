@@ -3,6 +3,7 @@ import "./shell.css";
 import { mountScene, type SceneHandle } from "./render/scene";
 import { createUI } from "./ui";
 import { getState, subscribe } from "./state";
+import { mountPlotMap } from "./plotMap";
 
 const sceneHost = document.getElementById("scene");
 if (!sceneHost) throw new Error("Missing #scene");
@@ -32,6 +33,7 @@ subscribe((state) => {
 
 ui.sync(getState());
 scene.sync(getState());
+mountPlotMap();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {
     // The village still opens if the app shell cannot be cached.

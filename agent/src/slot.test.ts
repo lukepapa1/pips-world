@@ -91,14 +91,14 @@ test("near-duplicate diary, notes, studies, creations, and builds are rejected o
 
     const proposal = await tools.executeTool(
       "propose_expansion",
-      { title: "A reading bench", detail: "Somewhere quiet to sit." },
+      { plot: "1,1", reason: "Somewhere quiet to sit and listen." },
       7,
       flags,
     );
     assert.match(proposal.result, /Filed/);
     const proposalAgain = await tools.executeTool(
       "propose_expansion",
-      { title: "A reading bench", detail: "The same bench." },
+      { plot: "1,1", reason: "The same quiet spot." },
       8,
       flags,
     );

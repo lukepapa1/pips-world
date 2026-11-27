@@ -2,6 +2,7 @@ import {
   isBlueprintRecord,
   isDigestRow,
   isPathRecord,
+  isPlotRecord,
   isWorldEvent,
   isWorldObject,
   isWorldState,
@@ -9,6 +10,7 @@ import {
   type ClientMessage,
   type DigestRow,
   type PathRecord,
+  type PlotRecord,
   type ServerMessage,
   type WorldEvent,
 } from "@pips/shared";
@@ -23,6 +25,7 @@ import {
   setGrowth,
   setConnected,
   setPaths,
+  setPlots,
   setWorldObjects,
   setWorldState,
   upsertDigest,
@@ -35,6 +38,7 @@ let digestQueue: DigestRow[] = [];
 let objectQueue: ServerMessage | null = null;
 let blueprintQueue: { blueprints: BlueprintRecord[]; blueprintApproval: boolean } | null = null;
 let pathQueue: PathRecord[] | null = null;
+let plotQueue: PlotRecord[] | null = null;
 let reconnectTimer = 0;
 
 export function send(message: ClientMessage): boolean {
@@ -55,6 +59,9 @@ export function connect(): void {
   queue = [];
   digestQueue = [];
   objectQueue = null;
+  blueprintQueue = null;
+  pathQueue = null;
+  plotQueue = null;
   setConnected(false);
 
   socket.addEventListener("open", () => {
@@ -84,6 +91,8 @@ export function connect(): void {
       blueprintQueue = null;
       if (pathQueue) setPaths(pathQueue);
       pathQueue = null;
+      if (plotQueue) setPlots(plotQueue);
+      plotQueue = null;
       return;
     }
     if (message.type === "blueprints") {
@@ -98,6 +107,12 @@ export function connect(): void {
     }
     if (message.type === "creations") {
       setCreations(message.creations);
+      return;
+    }
+    if (message.type === "plots") {
+      const plots = message.plots.filter(isPlotRecord);
+      if (!haveSnapshot) plotQueue = plots;
+      else setPlots(plots);
       return;
     }
     if (message.type === "paths") {

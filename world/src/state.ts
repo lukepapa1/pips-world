@@ -2,6 +2,7 @@ import {
   isBlueprintRecord,
   isBuildingId,
   isPathRecord,
+  isPlotRecord,
   isWorldEvent,
   isWorldObject,
   isWorldState,
@@ -13,6 +14,7 @@ import {
   type CreationsLibrary,
   type GrowthView,
   type PathRecord,
+  type PlotRecord,
   type RequestRow,
   type SnapshotMessage,
   type WorldEvent,
@@ -21,6 +23,8 @@ import {
 } from "@pips/shared";
 
 export type Placement = "none" | "walk" | "jump";
+
+export type Wander = { x: number; z: number };
 
 export type ClientState = {
   events: WorldEvent[];
@@ -42,6 +46,8 @@ export type ClientState = {
   blueprintApproval: boolean;
   growth: GrowthView | null;
   creations: CreationsLibrary | null;
+  plots: PlotRecord[];
+  wander: Wander | null;
 };
 
 const listeners = new Set<(state: ClientState) => void>();
@@ -66,6 +72,8 @@ let state: ClientState = {
   blueprintApproval: false,
   growth: null,
   creations: null,
+  plots: [],
+  wander: null,
 };
 
 export function getState(): ClientState {
@@ -89,6 +97,18 @@ function pipAtFrom(events: WorldEvent[]): BuildingId | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     if (event?.kind === "move" && isBuildingId(event.payload.to)) return event.payload.to;
+    if (event?.kind === "plot" && event.payload.action === "explored") return null;
+  }
+  return null;
+}
+
+function wanderFrom(events: WorldEvent[]): Wander | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.kind === "move") return null;
+    if (event?.kind === "plot" && event.payload.action === "explored") {
+      return { x: event.payload.x, z: event.payload.z };
+    }
   }
   return null;
 }
@@ -116,6 +136,8 @@ export function loadSnapshot(message: SnapshotMessage): void {
     blueprintApproval: message.blueprintApproval === true,
     growth: message.growth ?? state.growth,
     creations: message.creations ?? state.creations,
+    plots: Array.isArray(message.plots) ? message.plots.filter(isPlotRecord) : state.plots,
+    wander: wanderFrom(events),
   });
 }
 
@@ -140,6 +162,10 @@ export function setPaths(paths: PathRecord[]): void {
   commit({ ...state, paths: paths.filter(isPathRecord), placement: "none" });
 }
 
+export function setPlots(plots: PlotRecord[]): void {
+  commit({ ...state, plots: plots.filter(isPlotRecord), placement: "none" });
+}
+
 export function setWorldObjects(objects: WorldObject[]): void {
   commit({ ...state, objects: objects.filter(isWorldObject), placement: "none" });
 }
@@ -152,11 +178,13 @@ export function applyEvent(event: WorldEvent): void {
   let requests = state.requests;
   let paused = state.paused;
   let pipAt = state.pipAt;
+  let wander = state.wander;
   let placement: Placement = "none";
 
   switch (event.kind) {
     case "move":
       if (isBuildingId(event.payload.to)) pipAt = event.payload.to;
+      wander = null;
       placement = "walk";
       break;
     case "diary":
@@ -218,6 +246,12 @@ export function applyEvent(event: WorldEvent): void {
     case "creation_updated":
     case "creation_finished":
       break;
+    case "plot":
+      if (event.payload.action === "explored") {
+        wander = { x: event.payload.x, z: event.payload.z };
+        placement = "walk";
+      }
+      break;
   }
 
   commit({
@@ -228,6 +262,7 @@ export function applyEvent(event: WorldEvent): void {
     requests,
     paused,
     pipAt,
+    wander,
     placement,
     tick: Math.max(state.tick, event.tick),
     day: event.tick >= state.tick ? event.day : state.day,

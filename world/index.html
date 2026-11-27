@@ -49,10 +49,22 @@
         <span id="clock"><span id="clock-text">Pip is connecting…</span></span>
       </button>
 
-      <div id="banner" role="status" hidden>
+      <section id="banner" role="status" hidden>
         <strong>PAUSED</strong>
         <span>Pip stays put until you resume.</span>
+      </section>
+
+      <div id="world-tools">
+        <button type="button" id="open-map" aria-expanded="false" aria-controls="plot-map">Map</button>
+        <button type="button" id="quality" aria-pressed="false">Graphics: low</button>
       </div>
+      <section id="plot-map" hidden>
+        <header>
+          <h2>Land</h2>
+          <button type="button" id="close-map" class="close">Close</button>
+        </header>
+        <canvas id="plot-map-canvas" width="220" height="220" aria-label="Unlocked plots, mist, and Pip"></canvas>
+      </section>
 
       <section id="pip-sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="pip-sheet-title" hidden>
         <header>

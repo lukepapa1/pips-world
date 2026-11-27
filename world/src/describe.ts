@@ -36,6 +36,8 @@ export function eventLabel(event: WorldEvent): string {
       return "Making";
     case "creation_finished":
       return "Finished";
+    case "plot":
+      return event.payload.action === "unlocked" ? "Opened" : "Explore";
   }
 }
 
@@ -97,6 +99,9 @@ export function eventText(event: WorldEvent): string {
       return `Pip saved version ${event.payload.version} of “${event.payload.title}”.`;
     case "creation_finished":
       return `Pip finished “${event.payload.title}”.`;
+    case "plot":
+      if (event.payload.action === "unlocked") return `${event.payload.name} opened.`;
+      return `Pip walked to the edge of ${event.payload.name}.`;
   }
 }
 

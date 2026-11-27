@@ -12,6 +12,7 @@ import { runBuild } from "./build.js";
 import { designBlueprint, layPath, previewBlueprint } from "./blueprints.js";
 import { continueStudy, endStudy, saveNote, searchNotes, startStudy } from "./growth.js";
 import { finishCreation, listCreations, openCreation, saveCreation } from "./creations.js";
+import { explorePlot, proposeExpansion } from "./plots.js";
 
 const TEXT_MAX = 4000;
 const FILE_MAX = 12_000;
@@ -327,16 +328,28 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "propose_expansion",
     description:
-      "Ask the owner to approve an expansion of the village. Say what it is. A near-duplicate of one already filed is returned instead.",
+      "Ask the owner to open a plot that shares a side with land already open. Ask rarely, and always give your own reason. plot is the grid of a mist edge. A request already filed for that plot is returned instead.",
     parameters: {
       type: "object",
       properties: {
-        title: { type: "string", description: "Short name for the expansion." },
-        detail: { type: "string", description: "What you want considered." },
+        plot: { type: "string", description: "Grid of the mist plot, such as two numbers separated by a comma." },
+        reason: { type: "string", description: "Why you want to go there." },
       },
-      required: ["title", "detail"],
+      required: ["plot", "reason"],
     },
-    required: ["title", "detail"],
+    required: ["plot", "reason"],
+  },
+  {
+    name: "explore",
+    description: "Walk to the near edge of a plot the owner has already opened. plot is its grid.",
+    parameters: {
+      type: "object",
+      properties: {
+        plot: { type: "string", description: "Grid of an open plot, such as two numbers separated by a comma." },
+      },
+      required: ["plot"],
+    },
+    required: ["plot"],
   },
   {
     name: "propose_mechanic",
@@ -442,7 +455,9 @@ export async function executeTool(
     case "finish_creation":
       return runFinishCreation(args, tick);
     case "propose_expansion":
-      return propose("Expansion", args, tick);
+      return proposeExpansion(args, tick);
+    case "explore":
+      return explorePlot(args, tick);
     case "propose_mechanic":
       return propose("Mechanic", args, tick);
     default:

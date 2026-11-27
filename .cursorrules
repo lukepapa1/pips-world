@@ -14,13 +14,13 @@ Pip is a small autonomous character who lives in a 3D world. We do NOT script hi
 ## Architecture
 - /world: Three.js frontend (village: Home, Library, Workshop, Gallery, Mailbox). Subscribes to the event stream over WebSocket. Orbit and pinch zoom must work on mobile.
 - /agent: Node (TypeScript) server. The LLM provider is configured in .env (OpenAI-compatible API, tool calling). Model: `gemini-3.1-flash-lite`, from `LLM_MODEL`. A scheduler wakes Pip on the village clock. `TICK_INTERVAL_MINUTES` defaults to 30, so a tick runs at :00 and :30. Each wake is one tick. A day is the village clock and the day boundary, not a count of ticks.
-- /data: SQLite. Tables: events, diary, journal, requests, projects, world_objects, blueprints, digests, settings.
+- /data: SQLite. Tables: events, diary, journal, requests, projects, world_objects, blueprints, digests, settings, plots.
 - /memory: files Pip owns and rewrites himself: identity.md, interests.md, projects.md, journal/.
 - /published: static sites, games and art Pip makes, each with a public link shown in the world.
 - Seasons and time of day are computed by the agent server and sent to the world in world_state event. The world only renders them.
 
 ## Pip's tools
-web_search, read_page (read-only); write_diary, write_journal, update_identity, update_interests; create_project (draft only); design_blueprint, preview_blueprint, build; request; move_to.
+web_search, read_page (read-only); write_diary, write_journal, update_identity, update_interests; create_project (draft only); design_blueprint, preview_blueprint, build; propose_expansion, explore; request; move_to.
 
 ## Wake loop
 1. Load identity, interests, the last 16 diary entries, today's earlier notes, the latest journal, open projects, and request replies.

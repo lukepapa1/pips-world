@@ -22,6 +22,8 @@ export type RuntimeConfig = {
   dailyBuildCap: number;
   dailyChatCap: number;
   webCallsPerTick: number;
+  expansionPerWeek: number;
+  maxPlots: number;
 };
 
 const CLOCK_MINUTES = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60];
@@ -95,6 +97,8 @@ export function loadRuntimeConfig(): RuntimeConfig {
     dailyBuildCap: intEnv("DAILY_BUILD_CAP", 3, 0, 100_000),
     dailyChatCap: intEnv("DAILY_CHAT_CAP", 100, 0, 100_000),
     webCallsPerTick: intEnv("WEB_CALLS_PER_TICK", 10, 0, 1000),
+    expansionPerWeek: intEnv("EXPANSION_PER_WEEK", 1, 0, 52),
+    maxPlots: intEnv("MAX_PLOTS", 16, 1, 200),
   };
   return frozen;
 }

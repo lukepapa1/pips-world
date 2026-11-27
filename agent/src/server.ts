@@ -27,6 +27,7 @@ import {
   listDigests,
   listEvents,
   listJournal,
+  listPlots,
   listRequests,
   listWorldObjects,
   markAllDiaryRead,
@@ -45,6 +46,7 @@ import { tickInProgress, runAgentTick } from "./loop.js";
 import { currentWorldState, setSeasonPreview } from "./season.js";
 import { overviewPayload, publicOverviewEnabled } from "./overview.js";
 import { currentTick } from "./tickState.js";
+import { applyExpansionDecision, expansionBlock } from "./plots.js";
 import { endStudy, growthView, setAwakeHours, setPace, setReadCap } from "./growth.js";
 import {
   archiveCreation,
@@ -81,6 +83,7 @@ function snapshot(): SnapshotMessage {
     blueprintApproval: blueprintApprovalRequired(),
     growth: growthView(),
     creations: libraryView(),
+    plots: listPlots(),
   };
 }
 
@@ -666,6 +669,11 @@ export function startServer(): http.Server {
         return;
       }
 
+      const blocked = expansionBlock(message.requestId, message.decision);
+      if (blocked) {
+        socket.send(JSON.stringify({ type: "error", message: blocked }));
+        return;
+      }
       const event = decideRequest(message.requestId, message.decision, tick);
       if (!event) {
         socket.send(
@@ -677,6 +685,7 @@ export function startServer(): http.Server {
         return;
       }
       broadcast({ type: "event", event });
+      applyExpansionDecision(message.requestId, message.decision, tick);
       console.log(`Request ${message.decision}: ${message.requestId}`);
     });
 
