@@ -1,4 +1,5 @@
 import { connect, send } from "./socket";
+import "./shell.css";
 import { mountScene, type SceneHandle } from "./render/scene";
 import { createUI } from "./ui";
 import { getState, subscribe } from "./state";
@@ -12,6 +13,8 @@ scene = mountScene(sceneHost, (action) => {
   if (action === "diary") ui.openDiary();
   if (action === "mailbox") ui.openMailbox();
   if (action === "chat") ui.openChat();
+  if (action === "pip") ui.openPip();
+  if (typeof action === "object" && action.kind === "creation") ui.openCreation(action.id);
 });
 
 subscribe((state) => {

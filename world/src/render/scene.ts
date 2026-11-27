@@ -19,7 +19,7 @@ export type SceneHandle = {
 
 export function mountScene(
   container: HTMLElement,
-  onAction: (action: WorldAction | "chat") => void,
+  onAction: (action: WorldAction | "chat" | "pip") => void,
 ): SceneHandle {
   const scene = new THREE.Scene();
 
@@ -65,7 +65,7 @@ export function mountScene(
     life.setQuality(next);
     seasonFx.setQuality(next);
     if (qualityButton) {
-      qualityButton.textContent = next === "high" ? "High" : "Low";
+      qualityButton.textContent = next === "high" ? "Graphics: high" : "Graphics: low";
       qualityButton.setAttribute("aria-pressed", next === "high" ? "true" : "false");
       qualityButton.setAttribute("aria-label", `Graphics quality: ${next}`);
     }
@@ -111,18 +111,23 @@ export function mountScene(
   let tracking = false;
 
   function frameCamera(aspect: number): void {
-    if (aspect < 0.85) {
-      camera.fov = 56;
-      camera.position.set(8, 22, 10);
+    if (aspect < 0.75) {
+      camera.fov = 50;
+      camera.position.set(20, 33, 24);
+      controls.minDistance = 16;
+      controls.maxDistance = 52;
+    } else if (aspect < 0.85) {
+      camera.fov = 48;
+      camera.position.set(14, 24, 16);
       controls.minDistance = 12;
-      controls.maxDistance = 40;
+      controls.maxDistance = 44;
     } else {
       camera.fov = 40;
       camera.position.set(14, 13, 16);
       controls.minDistance = 9;
       controls.maxDistance = 36;
     }
-    controls.target.set(0, 0, 0);
+    controls.target.set(0, 0.2, 0);
     camera.updateProjectionMatrix();
     controls.update();
   }
@@ -166,11 +171,11 @@ export function mountScene(
     controls.update();
   }
 
-  function hitAction(event: PointerEvent): WorldAction | "chat" | null {
+  function hitAction(event: PointerEvent): WorldAction | "chat" | "pip" | null {
     setPointer(event);
     raycaster.setFromCamera(pointer, camera);
     const pipHit = raycaster.intersectObject(pip.group, true);
-    if (pipHit.length > 0) return "chat";
+    if (pipHit.length > 0) return "pip";
     const hits = raycaster.intersectObjects(village.pickables, true);
     for (const hit of hits) {
       const action = actionOf(hit.object);
@@ -256,6 +261,7 @@ export function mountScene(
       pip.setPaused(state.paused);
       village.setBrowsing(state.browsing !== null);
       village.syncObjects(state.objects, state.blueprints, state.paths);
+      village.syncCreations(state.creations?.items ?? []);
       if (state.world) atmosphere.setWorld(state.world);
       if (state.placement === "none" || !state.pipAt) return;
       const spot = village.stands[state.pipAt];

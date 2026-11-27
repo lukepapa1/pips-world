@@ -12,6 +12,7 @@ import {
   listWorldObjects,
   liveBlueprint,
   makeEvent,
+  saveBlueprintNote,
   saveEvents,
   savePath,
   setBlueprintApproval,
@@ -56,7 +57,7 @@ function logBlueprint(
   broadcast({ type: "event", event });
 }
 
-export function designBlueprint(name: string, raw: unknown, tick: number): ToolOutcome {
+export function designBlueprint(name: string, raw: unknown, tick: number, why?: string): ToolOutcome {
   const specInput = typeof raw === "string" ? parseJson(raw) : raw;
   if (typeof raw === "string" && specInput === undefined) {
     return { result: "spec must be JSON, not code.", kind: null };
@@ -71,6 +72,8 @@ export function designBlueprint(name: string, raw: unknown, tick: number): ToolO
   const status = approval ? "pending" : "live";
   if (!approval) archiveLiveBlueprint(name);
   insertBlueprint(name, version, JSON.stringify(checked.spec), status, "pip", new Date().toISOString());
+  const note = typeof why === "string" ? why.trim().slice(0, 500) : "";
+  if (note) saveBlueprintNote(name, version, note);
   logBlueprint("design", name, version, status, tick);
   publishBlueprints();
   if (approval) {

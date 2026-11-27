@@ -10,17 +10,21 @@ import {
   isBuildingId,
   liveSpec,
   starterObjects,
+  galleryPicks,
+  studioDrafts,
   type BlueprintRecord,
   type BuildingId,
+  type CreationView,
   type PathRecord,
   type Season,
   type WorldObject,
 } from "@pips/shared";
 import { makeBlueprintMesh } from "./blueprintMesh";
+import { addStudioFurniture, syncGallery, syncStudio } from "./studio";
 import { makePiece } from "./pieces";
 import type { Quality } from "./quality";
 
-export type WorldAction = "diary" | "mailbox";
+export type WorldAction = "diary" | "mailbox" | { kind: "creation"; id: string };
 
 export type Stand = {
   stand: THREE.Vector3;
@@ -223,6 +227,7 @@ export type Village = {
   setSeason(weights: Record<Season, number>): void;
   setQuality(quality: Quality): void;
   syncObjects(objects: WorldObject[], blueprints?: BlueprintRecord[], paths?: PathRecord[]): void;
+  syncCreations(items: CreationView[]): void;
 };
 
 export function createVillage(scene: THREE.Scene, quality: Quality): Village {
@@ -373,6 +378,11 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     log.castShadow = true;
     workshop.add(log);
   }
+  addStudioFurniture(workshop);
+  const studioWork = new THREE.Group();
+  studioWork.name = "studio-work";
+  workshop.add(studioWork);
+  pickables.push(studioWork);
   addSign(workshop, BUILDING_NAMES.workshop);
   stands.workshop = place(workshop, "workshop");
   scene.add(workshop);
@@ -386,6 +396,10 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
   const frame = box(0.55, 0.7, 0.05, mat("#efe8dc"), 1.15, 0.55, 1.15);
   frame.rotation.y = -0.4;
   gallery.add(frame);
+  const galleryShows = new THREE.Group();
+  galleryShows.name = "gallery-shows";
+  gallery.add(galleryShows);
+  pickables.push(galleryShows);
   addSign(gallery, BUILDING_NAMES.gallery);
   stands.gallery = place(gallery, "gallery");
   scene.add(gallery);
@@ -816,6 +830,10 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
       }
     },
     syncObjects,
+    syncCreations(items: CreationView[]) {
+      syncStudio(studioWork, studioDrafts(items));
+      syncGallery(galleryShows, galleryPicks(items));
+    },
   };
 }
 
@@ -860,6 +878,7 @@ export function actionOf(object: THREE.Object3D | null): WorldAction | null {
   while (current) {
     const action = current.userData.action;
     if (action === "diary" || action === "mailbox") return action;
+    if (typeof current.userData.creationId === "string") return { kind: "creation", id: current.userData.creationId };
     current = current.parent;
   }
   return null;

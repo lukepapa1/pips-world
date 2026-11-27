@@ -23,7 +23,7 @@ The object has:
 - headline: one short sentence
 - built: things he added, moved, or removed in the village, and also where he went or how the season shifted. Put each build note in built
 - learnt: things he read or figured out
-- made: projects or things he made
+- made: projects or things he made, including a creation he started, updated, or finished
 - wants: requests that are still open
 
 Each section is an array of { "text": one short sentence, "url": null }. Put a url only when the notes already include that link. Use an empty array when a section has nothing. At most five items in a section. Group repeated walks into one sentence. Do not invent projects, links, or requests.
@@ -84,6 +84,12 @@ function eventLine(event: WorldEvent): string | null {
     }
     case "blueprint":
       return `Blueprint ${event.payload.name} version ${event.payload.version} (${event.payload.status}).`;
+    case "creation_started":
+      return `Started a creation “${event.payload.title}” (${event.payload.type}).`;
+    case "creation_updated":
+      return `Saved version ${event.payload.version} of “${event.payload.title}”.`;
+    case "creation_finished":
+      return `Finished “${event.payload.title}”.`;
     default:
       return null;
   }
@@ -159,6 +165,31 @@ function items(value: unknown): DigestItem[] {
   return out;
 }
 
+function addMade(sections: DigestSections, day: number): DigestSections {
+  const made = [...sections.made];
+  const events = eventsForDay(day);
+  const finished = new Set<string>();
+  for (const event of events) {
+    if (event.kind === "creation_finished") finished.add(event.payload.title);
+  }
+  for (const event of events) {
+    if (event.kind !== "creation_finished" && event.kind !== "creation_started" && event.kind !== "creation_updated") {
+      continue;
+    }
+    if (event.kind !== "creation_finished" && finished.has(event.payload.title)) continue;
+    if (made.some((item) => item.text.includes(event.payload.title))) continue;
+    if (made.length >= 5) break;
+    const text =
+      event.kind === "creation_finished"
+        ? `Finished “${event.payload.title}”.`
+        : event.kind === "creation_updated"
+          ? `Saved a version of “${event.payload.title}”.`
+          : `Started “${event.payload.title}”.`;
+    made.push({ text, url: null });
+  }
+  return { ...sections, made };
+}
+
 function parseDigest(text: string, day: number): { headline: string; sections: DigestSections } {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -210,6 +241,7 @@ export async function generateDailyDigest(
   let written: { headline: string; sections: DigestSections };
   try {
     written = await ask(day);
+    written = { ...written, sections: addMade(written.sections, day) };
   } catch (error) {
     if (error instanceof CapError || error instanceof LlmError) throw error;
     const message = error instanceof Error ? error.message : "Digest failed.";

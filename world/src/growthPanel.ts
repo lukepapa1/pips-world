@@ -6,7 +6,7 @@ function esc(value: string): string {
 
 export function growthMarkup(state: ClientState): string {
   const growth = state.growth;
-  if (!growth) return `<p class="empty">Connecting…</p>`;
+  if (!growth) return `<div class="skeleton" aria-busy="true" aria-label="Loading pace"><span></span><span></span></div>`;
   const paceButtons = (["calm", "active", "fast"] as const)
     .map((pace) => {
       const label = pace === "calm" ? "Calm · 60 min" : pace === "active" ? "Active · 30 min" : "Fast · 15 min";

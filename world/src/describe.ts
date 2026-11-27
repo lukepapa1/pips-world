@@ -31,6 +31,11 @@ export function eventLabel(event: WorldEvent): string {
       return "Built";
     case "blueprint":
       return "Blueprint";
+    case "creation_started":
+    case "creation_updated":
+      return "Making";
+    case "creation_finished":
+      return "Finished";
   }
 }
 
@@ -86,6 +91,12 @@ export function eventText(event: WorldEvent): string {
         ? `Blueprint ${name} version ${version} is live.`
         : `Blueprint ${name} version ${version} is waiting for approval.`;
     }
+    case "creation_started":
+      return `Pip started “${event.payload.title}” in the studio.`;
+    case "creation_updated":
+      return `Pip saved version ${event.payload.version} of “${event.payload.title}”.`;
+    case "creation_finished":
+      return `Pip finished “${event.payload.title}”.`;
   }
 }
 

@@ -6,15 +6,20 @@
     <meta name="theme-color" content="#b7d4ea" />
     <title>Pip's World</title>
     <style>
+      :root { color-scheme: light; --ink: #2a241c; --ink-soft: #5c5146; --paper: #f6f0e4; --sky: #b7d4ea; --shadow: 0 12px 32px rgba(48, 32, 16, 0.14); }
+      @media (prefers-color-scheme: dark) {
+        :root { color-scheme: dark; --ink: #f6f0e4; --ink-soft: #d4c6b4; --paper: #241e18; --sky: #1c2830; --shadow: 0 12px 32px rgba(0, 0, 0, 0.35); }
+      }
       body {
         margin: 0;
         min-height: 100vh;
         min-height: 100dvh;
         display: grid;
         place-items: center;
-        background: #b7d4ea;
-        color: #2a241c;
-        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background: var(--sky);
+        color: var(--ink);
+        font-family: "Source Sans 3", "Avenir Next", "Segoe UI", sans-serif;
+        font-size: 16px;
         padding:
           max(24px, env(safe-area-inset-top))
           max(24px, env(safe-area-inset-right))
@@ -23,20 +28,21 @@
       }
       main {
         width: min(420px, 100%);
-        background: #f6f0e4;
+        background: var(--paper);
         border-radius: 22px;
-        padding: 28px 24px;
-        box-shadow: 0 16px 40px rgba(48, 32, 16, 0.16);
+        padding: 32px 24px;
+        box-shadow: var(--shadow);
         text-align: center;
       }
       h1 {
-        font-family: Georgia, serif;
-        font-size: 1.7rem;
+        font-family: Nunito, "Avenir Next", sans-serif;
+        font-size: 28px;
+        font-weight: 700;
         line-height: 1.2;
         margin: 0 0 8px;
         text-wrap: balance;
       }
-      p { margin: 0; color: #7a6e60; line-height: 1.45; }
+      p { margin: 0; color: var(--ink-soft); line-height: 1.45; }
     </style>
   </head>
   <body>

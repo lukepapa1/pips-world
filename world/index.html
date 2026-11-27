@@ -14,55 +14,67 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,560;0,9..144,680;1,9..144,560&family=Nunito+Sans:ital,opsz,wght@0,6..12,400;0,6..12,650;0,6..12,750&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,560;0,9..144,680&family=Nunito:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,560;0,9..144,680&family=Nunito:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
-  <body>
+  <body data-tab="world">
     <div id="scene"></div>
     <div id="ui">
-      <header id="topbar">
-        <div id="brand">
-          <p class="mark">Pip's World</p>
-          <p id="clock"><span id="presence"></span><span id="clock-text">Connecting…</span></p>
+      <header id="hud">
+        <button type="button" id="open-settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <div id="hud-copy">
           <p id="village-clock" hidden></p>
           <p id="season-chip"><span id="season-icon" aria-hidden="true"></span><span id="season-label">Season</span></p>
           <p id="browsing" hidden></p>
         </div>
-        <div id="actions">
-          <button type="button" id="open-digest">
-            Digest <span id="digest-count" class="count" hidden>0</span>
-          </button>
-          <button type="button" id="open-chat">Chat</button>
-          <button type="button" id="open-diary">
-            Diary <span id="diary-count" class="count" hidden>0</span>
-          </button>
-          <button type="button" id="open-mailbox">
-            Mailbox <span id="mail-count" class="count" hidden>0</span>
-          </button>
-          <button type="button" id="open-blueprints">
-            Blueprints <span id="blueprint-count" class="count" hidden>0</span>
-          </button>
-          <button type="button" id="open-growth">Growth</button>
-          <button type="button" id="pause" aria-pressed="false">Pause</button>
-          <button type="button" id="open-alerts">Alerts</button>
-          <button type="button" id="logout">Log out</button>
-          <button type="button" id="quality" aria-pressed="true" aria-label="Graphics quality: high">High</button>
-        </div>
+        <button type="button" id="hud-inbox" aria-label="Inbox">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zM4 6l8 7 8-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span id="hud-badge" class="tab-badge" hidden>0</span>
+        </button>
       </header>
+      <button type="button" id="status-pill">
+        <span id="presence"></span>
+        <span id="clock"><span id="clock-text">Pip is connecting…</span></span>
+      </button>
 
       <div id="banner" role="status" hidden>
         <strong>PAUSED</strong>
         <span>Pip stays put until you resume.</span>
       </div>
 
-      <section id="feed" aria-label="Activity">
+      <section id="pip-sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="pip-sheet-title" hidden>
+        <header>
+          <div>
+            <h2 id="pip-sheet-title">Pip</h2>
+            <p id="pip-sheet-sub">What he is doing</p>
+          </div>
+          <button type="button" class="close" data-close="pip">Close</button>
+        </header>
+        <div class="quick-actions">
+          <button type="button" data-pip="chat">Chat</button>
+          <button type="button" data-pip="diary">Diary</button>
+          <button type="button" data-pip="inbox">Inbox</button>
+          <button type="button" id="pause" aria-pressed="false">Pause</button>
+        </div>
+        <section id="feed" aria-label="Activity">
         <header>
           <h2>Activity</h2>
           <button type="button" id="feed-toggle" aria-expanded="true">Hide</button>
         </header>
         <div id="feed-list" aria-live="polite"></div>
+        </section>
       </section>
 
       <div id="scrim" hidden></div>
@@ -112,8 +124,8 @@
       <section id="mailbox" class="panel" role="dialog" aria-modal="true" aria-labelledby="mail-title" hidden>
         <header>
           <div>
-            <h2 id="mail-title">Mailbox</h2>
-            <p id="mail-sub">Requests waiting for you</p>
+            <h2 id="mail-title">Inbox</h2>
+            <p id="mail-sub">Everything that needs you</p>
           </div>
           <button type="button" class="close" data-close="mailbox">Close</button>
         </header>
@@ -131,7 +143,68 @@
         <div id="blueprints-body" class="panel-body"></div>
       </section>
 
-      <section id="growth" class="panel" role="dialog" aria-modal="true" aria-labelledby="growth-title" hidden>
+      <section id="settings" class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+        <header>
+          <div>
+            <h2 id="settings-title">Settings</h2>
+            <p>Pace, notifications, safety, sharing, and this phone.</p>
+          </div>
+          <button type="button" class="close" data-close="settings">Close</button>
+        </header>
+        <div class="panel-body">
+          <label class="pause-row">
+            <span>
+              <strong>Pause Pip</strong>
+              <small>He stays put until you resume. Nothing else about him changes.</small>
+            </span>
+            <button type="button" id="pause-switch" aria-pressed="false">Off</button>
+          </label>
+          <label class="search-field">
+            <span class="sr-only">Search settings</span>
+            <input id="settings-search" type="search" placeholder="Search settings" autocomplete="off" />
+          </label>
+          <section class="setting-group" data-keywords="pace calm active fast awake hours reads studies growth">
+            <h3>Pace</h3>
+            <p>How often Pip wakes, and how many pages he may read in a day.</p>
+            <button type="button" id="open-growth" class="sr-only" tabindex="-1" hidden>Growth</button>
+            <div id="growth-mount"></div>
+          </section>
+          <section class="setting-group" data-keywords="notifications alerts digest push test">
+            <h3>Notifications</h3>
+            <p>What this phone tells you about. A test is not an inbox item.</p>
+            <button type="button" id="open-alerts" class="sr-only" tabindex="-1" hidden>Alerts</button>
+            <div id="alerts-mount"></div>
+          </section>
+          <section class="setting-group" data-keywords="safety pause graphics quality approval blueprints">
+            <h3>Safety</h3>
+            <p>Pause is above. Graphics and blueprint approval live here too.</p>
+            <button type="button" id="quality" aria-pressed="true" aria-label="Graphics quality: high">Graphics: high</button>
+            <label class="switch"><input type="checkbox" id="approval-switch" /> Require approval before a new blueprint goes live</label>
+            <button type="button" id="open-blueprints">Open blueprint versions</button>
+          </section>
+          <section class="setting-group" data-keywords="public sharing storage budget creations">
+            <h3>Public sharing</h3>
+            <p>Nothing is public until you say so. Drafts stay on this phone.</p>
+            <label class="switch"><input type="checkbox" id="public-switch" /> A public page of creations you mark public</label>
+            <form id="storage-form">
+              <label>Storage budget, megabytes <input name="megabytes" type="number" min="64" max="20000" value="2048" /></label>
+              <button type="submit">Save budget</button>
+            </form>
+            <form id="max-form">
+              <label>Largest creation, megabytes <input name="megabytes" type="number" min="1" max="512" value="32" /></label>
+              <button type="submit">Save size</button>
+            </form>
+          </section>
+          <section class="setting-group" data-keywords="account log out logout password">
+            <h3>Account</h3>
+            <p>Log out on this phone. Pip keeps his diary, creations, and village.</p>
+            <button type="button" id="logout">Log out</button>
+            <button type="button" id="open-digest" class="quiet-button">Open the latest digest <span id="digest-count" class="count" hidden>0</span></button>
+          </section>
+        </div>
+      </section>
+
+      <section id="growth" class="panel settings-block" aria-labelledby="growth-title" hidden>
         <header>
           <div>
             <h2 id="growth-title">Growth</h2>
@@ -142,7 +215,29 @@
         <div id="growth-body" class="panel-body"></div>
       </section>
 
-      <section id="alerts" class="panel" role="dialog" aria-modal="true" aria-labelledby="alerts-title" hidden>
+      <section id="overview" class="panel" role="dialog" aria-modal="true" aria-labelledby="overview-title" hidden>
+        <header>
+          <div>
+            <h2 id="overview-title">Overview</h2>
+            <p id="overview-sub">Pip at a glance</p>
+          </div>
+          <button type="button" class="close" data-close="overview">Close</button>
+        </header>
+        <div id="overview-body" class="panel-body"></div>
+      </section>
+
+      <section id="creations" class="panel" role="dialog" aria-modal="true" aria-labelledby="creations-title" hidden>
+        <header>
+          <div>
+            <h2 id="creations-title">Creations</h2>
+            <p id="creations-sub">Studio library</p>
+          </div>
+          <button type="button" class="close" data-close="creations">Close</button>
+        </header>
+        <div id="creations-body" class="panel-body"></div>
+      </section>
+
+      <section id="alerts" class="panel settings-block" aria-labelledby="alerts-title" hidden>
         <header>
           <div>
             <h2 id="alerts-title">Alerts</h2>
@@ -161,6 +256,38 @@
         </div>
       </section>
 
+      <div id="connection-error" class="error-banner" hidden>
+        <p>The village didn't answer.</p>
+        <button type="button" id="retry">Try again</button>
+      </div>
+      <button type="button" id="open-chat" class="chat-fab" aria-label="Chat with Pip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14v9H8l-3 3V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      </button>
+      <nav id="tabbar" aria-label="Main">
+        <button type="button" data-tab="world" id="tab-world" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v8H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>World</span>
+        </button>
+        <button type="button" data-tab="overview" id="open-overview">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h6v6H5zM13 5h6v6h-6zM5 13h6v6H5zM13 13h6v6h-6z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          <span>Overview</span>
+        </button>
+        <button type="button" data-tab="diary" id="open-diary">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16H7zM9 8h6M9 12h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>Diary</span>
+          <span id="diary-count" class="tab-badge" hidden>0</span>
+        </button>
+        <button type="button" data-tab="creations" id="open-creations">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18l4-1 9-9-3-3-9 9-1 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>Creations</span>
+        </button>
+        <button type="button" data-tab="inbox" id="open-mailbox">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zM4 6l8 7 8-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>Inbox</span>
+          <span id="mail-count" class="tab-badge" hidden>0</span>
+          <span id="blueprint-count" class="count" hidden>0</span>
+        </button>
+      </nav>
       <div id="toast" role="status" hidden></div>
     </div>
     <script type="module" src="/src/main.ts"></script>

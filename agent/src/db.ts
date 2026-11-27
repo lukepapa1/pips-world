@@ -67,7 +67,7 @@ function migrate(): void {
     CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL CHECK (kind IN (
-        'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint'
+        'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint', 'creation_started', 'creation_updated', 'creation_finished'
       )),
       tick INTEGER NOT NULL,
       day INTEGER NOT NULL,
@@ -192,6 +192,59 @@ function migrate(): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_notes_touched ON notes(touched_at);
+
+    CREATE TABLE IF NOT EXISTS creations (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL CHECK (type IN ('art', 'writing', 'design', 'game', 'site', 'mechanic')),
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      pip_notes TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('draft', 'finished', 'published')),
+      season TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      favourite INTEGER NOT NULL DEFAULT 0,
+      archived INTEGER NOT NULL DEFAULT 0,
+      inspired_by TEXT NOT NULL DEFAULT '',
+      diary_ids TEXT NOT NULL DEFAULT '[]',
+      domains TEXT NOT NULL DEFAULT '[]',
+      source_tick INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS creation_versions (
+      creation_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      files_path TEXT NOT NULL,
+      thumbnail_path TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (creation_id, version),
+      FOREIGN KEY (creation_id) REFERENCES creations(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS interests (
+      name TEXT PRIMARY KEY,
+      summary TEXT NOT NULL,
+      strength INTEGER NOT NULL,
+      first_seen TEXT NOT NULL,
+      last_active TEXT NOT NULL,
+      diary_ids TEXT NOT NULL,
+      domains TEXT NOT NULL,
+      creation_ids TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS identity_versions (
+      version INTEGER PRIMARY KEY,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS blueprint_notes (
+      name TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      body TEXT NOT NULL,
+      PRIMARY KEY (name, version)
+    );
   `);
   db.prepare(
     `INSERT INTO settings (key, value) VALUES ('paused', '0')
@@ -209,7 +262,8 @@ function migrate(): void {
     `INSERT INTO settings (key, value) VALUES
        ('growth_pace', 'calm'),
        ('awake_start', '7'),
-       ('awake_end', '23')
+       ('awake_end', '23'),
+       ('creations_public', '0')
      ON CONFLICT(key) DO NOTHING`,
   ).run();
 }
@@ -218,13 +272,13 @@ function widenEventKinds(): void {
   const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'`).get() as
     | { sql: string }
     | undefined;
-  if (!row || row.sql.includes("'blueprint'")) return;
+  if (!row || row.sql.includes("'creation_finished'")) return;
   const tx = db.transaction(() => {
     db.exec(`
       CREATE TABLE events_next (
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN (
-          'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint'
+          'move', 'diary', 'journal', 'request', 'request_decision', 'pause', 'resume', 'season_change', 'chat', 'browse', 'build', 'blueprint', 'creation_started', 'creation_updated', 'creation_finished'
         )),
         tick INTEGER NOT NULL,
         day INTEGER NOT NULL,
@@ -681,6 +735,7 @@ function persist(event: WorldEvent): void {
         `INSERT INTO diary (id, day, tick, body, created_at, read_at)
          VALUES (?, ?, ?, ?, ?, NULL)`,
       ).run(event.payload.entryId, event.day, event.tick, event.payload.body, event.createdAt);
+      attachDiaryToCreations(event.tick, event.payload.entryId);
       break;
     case "journal":
       db.prepare(
@@ -710,6 +765,9 @@ function persist(event: WorldEvent): void {
     case "browse":
     case "build":
     case "blueprint":
+    case "creation_started":
+    case "creation_updated":
+    case "creation_finished":
       break;
   }
 }
@@ -1369,6 +1427,209 @@ export function diaryBetween(startIso: string, endIso: string): { tick: number; 
     .all(startIso, endIso) as { tick: number; body: string }[];
 }
 
+export type CreationRow = {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  pipNotes: string;
+  status: string;
+  season: string;
+  createdAt: string;
+  updatedAt: string;
+  favourite: boolean;
+  archived: boolean;
+  inspiredBy: string;
+  diaryIds: string[];
+  domains: string[];
+  sourceTick: number | null;
+};
+
+export type CreationVersionRow = {
+  creationId: string;
+  version: number;
+  filesPath: string;
+  thumbnailPath: string | null;
+  createdAt: string;
+};
+
+type CreationSql = {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  pip_notes: string;
+  status: string;
+  season: string;
+  created_at: string;
+  updated_at: string;
+  favourite: number;
+  archived: number;
+  inspired_by: string;
+  diary_ids: string;
+  domains: string;
+  source_tick: number | null;
+};
+
+function jsonList(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function mapCreation(row: CreationSql): CreationRow {
+  return {
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    description: row.description,
+    pipNotes: row.pip_notes,
+    status: row.status,
+    season: row.season,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    favourite: row.favourite === 1,
+    archived: row.archived === 1,
+    inspiredBy: row.inspired_by,
+    diaryIds: jsonList(row.diary_ids),
+    domains: jsonList(row.domains),
+    sourceTick: row.source_tick,
+  };
+}
+
+const CREATION_SELECT = `SELECT id, type, title, description, pip_notes, status, season, created_at, updated_at, favourite, archived, inspired_by, diary_ids, domains, source_tick FROM creations`;
+
+export function listCreationRows(): CreationRow[] {
+  const rows = db.prepare(`${CREATION_SELECT} ORDER BY updated_at DESC`).all() as CreationSql[];
+  return rows.map(mapCreation);
+}
+
+export function creationRow(id: string): CreationRow | null {
+  const row = db.prepare(`${CREATION_SELECT} WHERE id = ?`).get(id) as CreationSql | undefined;
+  return row ? mapCreation(row) : null;
+}
+
+export function findOpenDraft(type: string, title: string): CreationRow | null {
+  const row = db
+    .prepare(
+      `${CREATION_SELECT} WHERE type = ? AND lower(title) = lower(?) AND status = 'draft' AND archived = 0 ORDER BY updated_at DESC LIMIT 1`,
+    )
+    .get(type, title) as CreationSql | undefined;
+  return row ? mapCreation(row) : null;
+}
+
+export function insertCreation(row: CreationRow): void {
+  db.prepare(
+    `INSERT INTO creations (
+      id, type, title, description, pip_notes, status, season, created_at, updated_at,
+      favourite, archived, inspired_by, diary_ids, domains, source_tick
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.id,
+    row.type,
+    row.title,
+    row.description,
+    row.pipNotes,
+    row.status,
+    row.season,
+    row.createdAt,
+    row.updatedAt,
+    row.favourite ? 1 : 0,
+    row.archived ? 1 : 0,
+    row.inspiredBy,
+    JSON.stringify(row.diaryIds),
+    JSON.stringify(row.domains),
+    row.sourceTick,
+  );
+}
+
+export function saveCreationRow(row: CreationRow): void {
+  db.prepare(
+    `UPDATE creations SET
+      description = ?, pip_notes = ?, status = ?, updated_at = ?, favourite = ?, archived = ?,
+      inspired_by = ?, diary_ids = ?, domains = ?, source_tick = ?
+     WHERE id = ?`,
+  ).run(
+    row.description,
+    row.pipNotes,
+    row.status,
+    row.updatedAt,
+    row.favourite ? 1 : 0,
+    row.archived ? 1 : 0,
+    row.inspiredBy,
+    JSON.stringify(row.diaryIds),
+    JSON.stringify(row.domains),
+    row.sourceTick,
+    row.id,
+  );
+}
+
+export function listVersionRows(creationId: string): CreationVersionRow[] {
+  const rows = db
+    .prepare(
+      `SELECT creation_id, version, files_path, thumbnail_path, created_at FROM creation_versions WHERE creation_id = ? ORDER BY version ASC`,
+    )
+    .all(creationId) as {
+    creation_id: string;
+    version: number;
+    files_path: string;
+    thumbnail_path: string | null;
+    created_at: string;
+  }[];
+  return rows.map((row) => ({
+    creationId: row.creation_id,
+    version: row.version,
+    filesPath: row.files_path,
+    thumbnailPath: row.thumbnail_path,
+    createdAt: row.created_at,
+  }));
+}
+
+export function insertVersion(row: CreationVersionRow): void {
+  db.prepare(
+    `INSERT INTO creation_versions (creation_id, version, files_path, thumbnail_path, created_at) VALUES (?, ?, ?, ?, ?)`,
+  ).run(row.creationId, row.version, row.filesPath, row.thumbnailPath, row.createdAt);
+}
+
+export function attachDiaryToCreations(tick: number, diaryId: string): void {
+  const rows = db.prepare(`SELECT id, diary_ids FROM creations WHERE source_tick = ?`).all(tick) as {
+    id: string;
+    diary_ids: string;
+  }[];
+  for (const row of rows) {
+    const ids = jsonList(row.diary_ids);
+    if (ids.includes(diaryId)) continue;
+    ids.push(diaryId);
+    db.prepare(`UPDATE creations SET diary_ids = ? WHERE id = ?`).run(JSON.stringify(ids), row.id);
+  }
+}
+
+export function diaryIdForTick(tick: number): string | null {
+  const row = db.prepare(`SELECT id FROM diary WHERE tick = ? ORDER BY created_at DESC LIMIT 1`).get(tick) as
+    | { id: string }
+    | undefined;
+  return row?.id ?? null;
+}
+
+export function browseUrlsForTick(tick: number): string[] {
+  const rows = db.prepare(`SELECT payload FROM events WHERE kind = 'browse' AND tick = ?`).all(tick) as {
+    payload: string;
+  }[];
+  const urls: string[] = [];
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.payload) as { url?: unknown };
+      if (typeof payload.url === "string" && payload.url.trim()) urls.push(payload.url.trim());
+    } catch {
+      continue;
+    }
+  }
+  return urls;
+}
+
 export function markAllDiaryRead(): string | null {
   const pending = db.prepare(`SELECT COUNT(*) AS n FROM diary WHERE read_at IS NULL`).get() as {
     n: number;
@@ -1377,4 +1638,135 @@ export function markAllDiaryRead(): string | null {
   const readAt = new Date().toISOString();
   db.prepare(`UPDATE diary SET read_at = ? WHERE read_at IS NULL`).run(readAt);
   return readAt;
+}
+
+export type InterestRecord = {
+  name: string;
+  summary: string;
+  strength: number;
+  firstSeen: string;
+  lastActive: string;
+  diaryIds: string[];
+  domains: string[];
+  creationIds: string[];
+};
+
+export function replaceInterests(rows: InterestRecord[]): void {
+  const now = new Date().toISOString();
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM interests`).run();
+    const insert = db.prepare(
+      `INSERT INTO interests (name, summary, strength, first_seen, last_active, diary_ids, domains, creation_ids, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const row of rows) {
+      insert.run(
+        row.name,
+        row.summary,
+        row.strength,
+        row.firstSeen,
+        row.lastActive,
+        JSON.stringify(row.diaryIds),
+        JSON.stringify(row.domains),
+        JSON.stringify(row.creationIds),
+        now,
+      );
+    }
+  });
+  tx();
+}
+
+export function listInterestRecords(): InterestRecord[] {
+  const rows = db
+    .prepare(
+      `SELECT name, summary, strength, first_seen, last_active, diary_ids, domains, creation_ids FROM interests ORDER BY name`,
+    )
+    .all() as {
+    name: string;
+    summary: string;
+    strength: number;
+    first_seen: string;
+    last_active: string;
+    diary_ids: string;
+    domains: string;
+    creation_ids: string;
+  }[];
+  return rows.map((row) => ({
+    name: row.name,
+    summary: row.summary,
+    strength: row.strength,
+    firstSeen: row.first_seen,
+    lastActive: row.last_active,
+    diaryIds: jsonList(row.diary_ids),
+    domains: jsonList(row.domains),
+    creationIds: jsonList(row.creation_ids),
+  }));
+}
+
+export function rememberIdentity(before: string, next: string): void {
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM identity_versions`).get() as { n: number };
+  const latest = db.prepare(`SELECT body FROM identity_versions ORDER BY version DESC LIMIT 1`).get() as
+    | { body: string }
+    | undefined;
+  const insert = db.prepare(`INSERT INTO identity_versions (version, body, created_at) VALUES (?, ?, ?)`);
+  const now = new Date().toISOString();
+  if (count.n === 0 && before.trim() && before.trim() !== next.trim()) {
+    insert.run(1, before.endsWith("\n") ? before : `${before}\n`, now);
+  }
+  if (latest && latest.body.trim() === next.trim()) return;
+  const version = (db.prepare(`SELECT COALESCE(MAX(version), 0) AS v FROM identity_versions`).get() as { v: number }).v + 1;
+  insert.run(version, next.endsWith("\n") ? next : `${next}\n`, now);
+}
+
+export function listIdentityVersions(): { version: number; body: string; createdAt: string }[] {
+  const rows = db
+    .prepare(`SELECT version, body, created_at FROM identity_versions ORDER BY version DESC`)
+    .all() as { version: number; body: string; created_at: string }[];
+  return rows.map((row) => ({ version: row.version, body: row.body, createdAt: row.created_at }));
+}
+
+export function saveBlueprintNote(name: string, version: number, body: string): void {
+  db.prepare(
+    `INSERT INTO blueprint_notes (name, version, body) VALUES (?, ?, ?)
+     ON CONFLICT(name, version) DO UPDATE SET body = excluded.body`,
+  ).run(name, version, body);
+}
+
+export function listBlueprintNotes(): { name: string; version: number; body: string }[] {
+  return db.prepare(`SELECT name, version, body FROM blueprint_notes`).all() as {
+    name: string;
+    version: number;
+    body: string;
+  }[];
+}
+
+export function overviewFacts(): {
+  daysAlive: number;
+  ticks: number;
+  diary: number;
+  builds: number;
+  creations: number;
+  pagesRead: number;
+  activity: { day: number; count: number }[];
+} {
+  const days = db.prepare(`SELECT COUNT(DISTINCT day) AS n FROM events`).get() as { n: number };
+  const ticks = db.prepare(`SELECT COALESCE(MAX(tick), 0) AS n FROM events`).get() as { n: number };
+  const diary = db.prepare(`SELECT COUNT(*) AS n FROM diary`).get() as { n: number };
+  const builds = db.prepare(`SELECT COUNT(*) AS n FROM events WHERE kind = 'build'`).get() as { n: number };
+  const creations = db.prepare(`SELECT COUNT(*) AS n FROM creations WHERE archived = 0`).get() as { n: number };
+  const reads = db
+    .prepare(`SELECT COUNT(*) AS n FROM events WHERE kind = 'browse' AND json_extract(payload, '$.tool') = 'read_page'`)
+    .get() as { n: number };
+  const activity = db
+    .prepare(`SELECT day, COUNT(*) AS n FROM events GROUP BY day ORDER BY day DESC LIMIT 14`)
+    .all() as { day: number; n: number }[];
+  return {
+    daysAlive: days.n,
+    ticks: ticks.n,
+    diary: diary.n,
+    builds: builds.n,
+    creations: creations.n,
+    pagesRead: reads.n,
+    activity: activity.map((row) => ({ day: row.day, count: row.n })).reverse(),
+  };
 }

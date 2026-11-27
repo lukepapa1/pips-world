@@ -1,4 +1,5 @@
 import {
+  BUILDING_NAMES,
   hourFromTick,
   isSeason,
   type ClientMessage,
@@ -10,6 +11,10 @@ import {
 } from "@pips/shared";
 import { blueprintMarkup, pendingBlueprintCount } from "./blueprintsPanel";
 import { growthMarkup } from "./growthPanel";
+import { creationsMarkup, type CreationFilters } from "./creationsPanel";
+import { bindInboxSwipe, inboxCount, inboxMarkup } from "./inboxPanel";
+import { connect } from "./socket";
+import type { OverviewData, OverviewTab, OverviewUi } from "./overviewPanel";
 import { eventClass, eventHour, eventLabel, eventText } from "./describe";
 import { mountAlerts } from "./alerts";
 import {
@@ -77,7 +82,9 @@ function setCount(element: HTMLElement, count: number): void {
 }
 
 function diaryMarkup(entries: DiaryRow[]): string {
-  if (entries.length === 0) return `<p class="empty">The diary is blank.</p>`;
+  if (entries.length === 0) {
+    return `<div class="empty-state"><h3>The diary is blank.</h3><p>Pip writes a note at the end of each hour. It will show up here.</p></div>`;
+  }
   const sorted = [...entries].sort(
     (a, b) => b.day - a.day || b.tick - a.tick || b.createdAt.localeCompare(a.createdAt),
   );
@@ -202,6 +209,9 @@ export type UI = {
   openDiary(): void;
   openMailbox(): void;
   openChat(): void;
+  openCreation(id: string): void;
+  openOverview(): void;
+  openPip(): void;
 };
 
 type ChatLine = { id: string; role: "owner" | "pip"; text: string };
@@ -265,6 +275,30 @@ export function createUI(
   const growth = must<HTMLElement>("growth");
   const growthBody = must<HTMLElement>("growth-body");
   const openGrowthButton = must<HTMLButtonElement>("open-growth");
+  const creations = must<HTMLElement>("creations");
+  const creationsBody = must<HTMLElement>("creations-body");
+  const openCreationsButton = must<HTMLButtonElement>("open-creations");
+  const overview = must<HTMLElement>("overview");
+  const overviewBody = must<HTMLElement>("overview-body");
+  const openOverviewButton = must<HTMLButtonElement>("open-overview");
+  const settings = must<HTMLElement>("settings");
+  const pipSheet = must<HTMLElement>("pip-sheet");
+  const pipSheetSub = must<HTMLElement>("pip-sheet-sub");
+  const tabbar = must<HTMLElement>("tabbar");
+  const tabWorld = must<HTMLButtonElement>("tab-world");
+  const statusPill = must<HTMLButtonElement>("status-pill");
+  const openSettingsButton = must<HTMLButtonElement>("open-settings");
+  const hudInbox = must<HTMLButtonElement>("hud-inbox");
+  const hudBadge = must<HTMLElement>("hud-badge");
+  const retry = must<HTMLButtonElement>("retry");
+  const connectionError = must<HTMLElement>("connection-error");
+  const settingsSearch = must<HTMLInputElement>("settings-search");
+  const pauseSwitch = must<HTMLButtonElement>("pause-switch");
+  const approvalSwitch = must<HTMLInputElement>("approval-switch");
+  const publicSwitch = must<HTMLInputElement>("public-switch");
+  const storageForm = must<HTMLFormElement>("storage-form");
+  const maxForm = must<HTMLFormElement>("max-form");
+  document.getElementById("growth-mount")?.append(growth);
   const openAlertsButton = must<HTMLButtonElement>("open-alerts");
   const seasonIcon = must<HTMLElement>("season-icon");
   const seasonLabel = must<HTMLElement>("season-label");
@@ -322,6 +356,81 @@ export function createUI(
   let mailSig = "";
   let blueprintSig = "";
   let growthSig = "";
+  let creationSig = "";
+  let selectedCreation: string | null = null;
+  const creationFilters: CreationFilters = { type: "", season: "", status: "", starred: false };
+  let overviewSig = "";
+  let overviewPlace = "";
+  let overviewData: OverviewData | null = null;
+  let overviewError = "";
+  let overviewLoading = false;
+  const overviewUi: OverviewUi = { tab: "now", page: 0, blueprint: "", detail: "" };
+
+  let overviewApi: typeof import("./overviewPanel") | null = null;
+  let overviewApiLoading = false;
+
+  function renderOverview(): void {
+    if (overview.hidden) return;
+    if (!overviewApi) {
+      if (!overviewBody.querySelector(".skeleton")) {
+        overviewBody.innerHTML = `<div class="skeleton" aria-busy="true" aria-label="Loading the overview"><span></span><span></span><span></span></div>`;
+      }
+      if (!overviewApiLoading) {
+        overviewApiLoading = true;
+        void import("./overviewPanel").then((api) => {
+          overviewApi = api;
+          overviewSig = "";
+          renderOverview();
+        });
+      }
+      if (!overviewData && !overviewLoading && !overviewError) loadOverview();
+      return;
+    }
+    const api = overviewApi;
+    if (!overviewData && !overviewLoading && !overviewError) loadOverview();
+    const state = getState();
+    const key = `${overviewUi.tab}:${overviewUi.page}:${overviewUi.blueprint}:${overviewUi.detail}:${overviewError}:${state.day}:${state.pipAt}:${state.events.at(-1)?.id ?? ""}:${state.diary[0]?.id ?? ""}:${state.blueprints.length}:${state.objects.length}:${state.creations?.items.length ?? 0}:${overviewData ? "ready" : "wait"}`;
+    if (key === overviewSig && overviewBody.childElementCount > 0) return;
+    api.releaseOverviewPreviews();
+    const place = `${overviewUi.tab}:${overviewUi.page}:${overviewUi.blueprint}`;
+    const top = place === overviewPlace ? overviewBody.scrollTop : 0;
+    overviewBody.innerHTML = api.overviewMarkup(state, overviewData, overviewUi, overviewError);
+    api.bindOverview(overviewBody, state);
+    overviewBody.scrollTop = top;
+    overviewPlace = place;
+    overviewSig = key;
+  }
+
+  function loadOverview(): void {
+    if (overviewLoading) return;
+    overviewLoading = true;
+    overviewError = "";
+    fetch("/api/overview")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Overview did not load.");
+        overviewData = (await response.json()) as OverviewData;
+      })
+      .catch(() => {
+        overviewError = "The overview could not be loaded.";
+      })
+      .finally(() => {
+        overviewLoading = false;
+        overviewSig = "";
+        renderOverview();
+      });
+  }
+
+  function renderCreations(): void {
+    const library = getState().creations;
+    const key = library
+      ? `${library.usedBytes}:${library.budgetBytes}:${library.maxCreationBytes}:${library.publicEnabled}:${selectedCreation}:${creationFilters.type}:${creationFilters.season}:${creationFilters.status}:${creationFilters.starred}:${library.items.map((item) => item.id + item.status + item.updatedAt + item.favourite + item.archived).join(",")}`
+      : "";
+    if (key === creationSig && creationsBody.childElementCount > 0) return;
+    const top = creationsBody.scrollTop;
+    creationsBody.innerHTML = creationsMarkup(getState(), creationFilters, selectedCreation);
+    creationsBody.scrollTop = top;
+    creationSig = key;
+  }
   let digestSig = "";
   let selectedDay = 0;
   let bootShown = false;
@@ -390,6 +499,8 @@ export function createUI(
   }
 
   const alerts = mountAlerts(showToast);
+  const alertsRoot = document.getElementById("alerts");
+  if (alertsRoot) document.getElementById("alerts-mount")?.append(alertsRoot);
 
   function refreshScrim(): void {
     scrim.hidden =
@@ -399,19 +510,43 @@ export function createUI(
       digest.hidden &&
       blueprints.hidden &&
       growth.hidden &&
+      creations.hidden &&
+      overview.hidden &&
+      settings.hidden &&
+      pipSheet.hidden &&
       alerts.isOpen() === false;
   }
 
-  function closePanels(): void {
-    diary.hidden = true;
-    mailbox.hidden = true;
+  type ScreenName = "world" | "overview" | "diary" | "creations" | "inbox";
+  let screen: ScreenName = "world";
+
+  function showTab(tab: ScreenName): void {
+    screen = tab;
+    document.body.dataset.tab = tab;
+    sessionStorage.setItem("pips-tab", tab);
+    overview.hidden = tab !== "overview";
+    diary.hidden = tab !== "diary";
+    creations.hidden = tab !== "creations";
+    mailbox.hidden = tab !== "inbox";
     chat.hidden = true;
     blueprints.hidden = true;
-    growth.hidden = true;
-    alerts.close();
-    hideDigest();
+    settings.hidden = true;
+    pipSheet.hidden = true;
+    if (!digest.hidden) hideDigest();
+    for (const button of tabbar.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
+      button.setAttribute("aria-current", button.dataset.tab === tab ? "page" : "false");
+    }
+    if (tab === "overview") {
+      renderOverview();
+      if (!overviewData) loadOverview();
+    }
     refreshScrim();
     showChatFace();
+  }
+
+  function closePanels(): void {
+    alerts.close();
+    showTab("world");
   }
 
   function sortedDigests(state: ClientState): DigestRow[] {
@@ -483,6 +618,8 @@ export function createUI(
     mailbox.hidden = true;
     blueprints.hidden = true;
     growth.hidden = true;
+    creations.hidden = true;
+    overview.hidden = true;
     chat.hidden = true;
     alerts.close();
     refreshScrim();
@@ -492,17 +629,8 @@ export function createUI(
   }
 
   function considerDigest(state: ClientState): void {
-    if (alerts.isOpen()) return;
-    if (!state.connected || state.digests.length === 0) return;
-    const sorted = sortedDigests(state);
-    const unread = sorted.find((entry) => !entry.readAt);
-    if (!bootShown) {
-      bootShown = true;
-      const target = unread ?? sorted[0];
-      if (target) openDigest(target.day);
-      return;
-    }
-    if (unread && !revealed.has(unread.id)) openDigest(unread.day);
+    if (!state.connected) return;
+    bootShown = true;
   }
 
   function renderFeed(state: ClientState): void {
@@ -516,12 +644,22 @@ export function createUI(
   const ui: UI = {
     sync(state) {
       if (!state.connected) {
-        clockText.textContent = sawConnection ? "Reconnecting…" : "Connecting…";
+        clockText.textContent = sawConnection ? "Pip is reconnecting…" : "Pip is connecting…";
       } else {
         sawConnection = true;
         const hour = hourFromTick(state.tick);
-        clockText.textContent = hour > 0 ? `Day ${state.day} · Hour ${hour}` : `Day ${state.day}`;
+        const place = state.pipAt ? BUILDING_NAMES[state.pipAt] : "between places";
+        const draft = state.creations?.items.find((item) => item.status === "draft" && !item.archived);
+        clockText.textContent = state.paused
+          ? "Pip is paused"
+          : state.browsing
+            ? `Pip is reading`
+            : draft
+              ? `Pip is making ${draft.title}`
+              : `Pip is at the ${place}`;
+        if (hour > 0) pipSheetSub.textContent = `Day ${state.day} · Hour ${hour}`;
       }
+      connectionError.hidden = state.connected || !sawConnection;
       villageZone = state.connected ? (state.world?.zone ?? "") : "";
       villageZoneName = state.connected ? (state.world?.zoneName ?? "") : "";
       paintVillageClock();
@@ -530,17 +668,34 @@ export function createUI(
       browsing.textContent = state.browsing ? `browsing: ${state.browsing}` : "";
       const unread = unreadDiaryCount(state);
       const pending = pendingRequestCount(state);
-      setCount(diaryCount, unread);
-      setCount(mailCount, pending);
-      setCount(digestCount, unreadDigestCount(state));
       const waiting = pendingBlueprintCount(state);
+      const needing = inboxCount(state);
+      setCount(diaryCount, unread);
+      setCount(mailCount, needing);
+      setCount(hudBadge, needing);
+      setCount(digestCount, unreadDigestCount(state));
       setCount(blueprintCount, waiting);
       blueprintsSub.textContent = waiting > 0 ? `${waiting} waiting for approval` : "Versions of each object";
       diarySub.textContent =
         unread > 0 ? `${unread} unread · newest first` : "Newest first, grouped by day";
-      mailSub.textContent = pending > 0 ? `${pending} waiting for an answer` : "Nothing waiting";
+      mailSub.textContent = needing > 0 ? `${needing} need you` : "Nothing needs you";
       pause.textContent = state.paused ? "Resume" : "Pause";
       pause.setAttribute("aria-pressed", String(state.paused));
+      pauseSwitch.textContent = state.paused ? "On" : "Off";
+      pauseSwitch.setAttribute("aria-pressed", String(state.paused));
+      approvalSwitch.checked = state.blueprintApproval;
+      if (state.creations) {
+        publicSwitch.checked = state.creations.publicEnabled;
+        const budget = storageForm.elements.namedItem("megabytes");
+        const max = maxForm.elements.namedItem("megabytes");
+        if (budget instanceof HTMLInputElement && document.activeElement !== budget) {
+          budget.value = String(Math.round(state.creations.budgetBytes / (1024 * 1024)));
+        }
+        if (max instanceof HTMLInputElement && document.activeElement !== max) {
+          max.value = String(Math.round(state.creations.maxCreationBytes / (1024 * 1024)));
+        }
+      }
+      if (state.world?.season) document.body.dataset.season = state.world.season;
       pause.disabled = !state.connected;
       banner.hidden = !state.paused;
       document.body.classList.toggle("is-paused", state.paused);
@@ -565,10 +720,11 @@ export function createUI(
         diaryBody.scrollTop = diaryTop;
         diarySig = nextDiary;
       }
-      const nextMail = state.requests.map((request) => `${request.id}:${request.status}`).join("|");
+      const nextMail = `${inboxCount(state)}:${state.requests.map((request) => `${request.id}:${request.status}`).join("|")}:${state.digests.map((item) => item.id + (item.readAt ?? "")).join("|")}`;
       if (nextMail !== mailSig) {
         const mailTop = mailboxBody.scrollTop;
-        mailboxBody.innerHTML = requestMarkup(state.requests);
+        mailboxBody.innerHTML = inboxMarkup(state, state.connected);
+        bindInboxSwipe(mailboxBody);
         mailboxBody.scrollTop = mailTop;
         mailSig = nextMail;
       }
@@ -590,16 +746,57 @@ export function createUI(
         growthBody.scrollTop = top;
         growthSig = growthKey;
       }
+      renderCreations();
+      renderOverview();
       renderDigest(state);
       considerDigest(state);
       if (!diary.hidden && state.diary.some((entry) => !entry.readAt)) {
         if (send({ type: "mark_diary_read" })) markDiaryRead(new Date().toISOString());
       }
     },
+    openOverview() {
+      showTab("overview");
+      diary.hidden = true;
+      mailbox.hidden = true;
+      chat.hidden = true;
+      blueprints.hidden = true;
+      growth.hidden = true;
+      creations.hidden = true;
+      alerts.close();
+      hideDigest();
+      overview.hidden = false;
+      refreshScrim();
+      showChatFace();
+      renderOverview();
+      if (!overviewData) loadOverview();
+      overview.querySelector<HTMLElement>(".close")?.focus();
+    },
+    openCreation(id: string) {
+      showTab("creations");
+      selectedCreation = id;
+      creationSig = "";
+      diary.hidden = true;
+      mailbox.hidden = true;
+      chat.hidden = true;
+      blueprints.hidden = true;
+      growth.hidden = true;
+      creations.hidden = true;
+    overview.hidden = true;
+      creations.hidden = false;
+      alerts.close();
+      hideDigest();
+      refreshScrim();
+      showChatFace();
+      renderCreations();
+      creations.querySelector<HTMLElement>(".close")?.focus();
+    },
     openDiary() {
+      showTab("diary");
       mailbox.hidden = true;
       blueprints.hidden = true;
       growth.hidden = true;
+    creations.hidden = true;
+    overview.hidden = true;
       chat.hidden = true;
       alerts.close();
       hideDigest();
@@ -610,9 +807,12 @@ export function createUI(
       diary.querySelector<HTMLElement>(".close")?.focus();
     },
     openMailbox() {
+      showTab("inbox");
       diary.hidden = true;
       blueprints.hidden = true;
       growth.hidden = true;
+    creations.hidden = true;
+    overview.hidden = true;
       chat.hidden = true;
       alerts.close();
       hideDigest();
@@ -622,11 +822,22 @@ export function createUI(
       ui.sync(getState());
       mailbox.querySelector<HTMLElement>(".close")?.focus();
     },
+    openPip() {
+      pipSheetSub.textContent = clockText.textContent;
+      chat.hidden = true;
+      settings.hidden = true;
+      digest.hidden = true;
+      pipSheet.hidden = false;
+      refreshScrim();
+      pipSheet.querySelector<HTMLElement>(".close")?.focus();
+    },
     openChat() {
       diary.hidden = true;
       mailbox.hidden = true;
       blueprints.hidden = true;
       growth.hidden = true;
+    creations.hidden = true;
+    overview.hidden = true;
       alerts.close();
       hideDigest();
       chat.hidden = false;
@@ -677,6 +888,8 @@ export function createUI(
     mailbox.hidden = true;
     chat.hidden = true;
     growth.hidden = true;
+    creations.hidden = true;
+    overview.hidden = true;
     alerts.close();
     hideDigest();
     blueprints.hidden = false;
@@ -688,6 +901,8 @@ export function createUI(
   openGrowthButton.addEventListener("click", () => {
     if (!growth.hidden) {
       growth.hidden = true;
+    creations.hidden = true;
+    overview.hidden = true;
       refreshScrim();
       return;
     }
@@ -695,6 +910,8 @@ export function createUI(
     mailbox.hidden = true;
     chat.hidden = true;
     blueprints.hidden = true;
+    creations.hidden = true;
+    overview.hidden = true;
     alerts.close();
     hideDigest();
     growth.hidden = false;
@@ -702,6 +919,56 @@ export function createUI(
     showChatFace();
     ui.sync(getState());
     growth.querySelector<HTMLElement>(".close")?.focus();
+  });
+  openOverviewButton.addEventListener("click", () => ui.openOverview());
+  overviewBody.addEventListener("click", (event) => {
+    const control = (event.target as HTMLElement).closest<HTMLElement>("[data-overview-tab], [data-overview-page], [data-blueprint], [data-making], [data-rollback], [data-open-creation]");
+    if (!control) return;
+    if (control.dataset.overviewTab === "now" || control.dataset.overviewTab === "mind" || control.dataset.overviewTab === "making" || control.dataset.overviewTab === "blueprints" || control.dataset.overviewTab === "stats") {
+      overviewUi.tab = control.dataset.overviewTab as OverviewTab;
+      overviewUi.page = 0;
+      overviewUi.blueprint = "";
+      overviewUi.detail = "";
+      overviewSig = "";
+      renderOverview();
+      return;
+    }
+    if (control.dataset.overviewPage) {
+      overviewUi.page = Number(control.dataset.overviewPage);
+      overviewSig = "";
+      renderOverview();
+      return;
+    }
+    if (control.dataset.blueprint !== undefined && control.dataset.rollback === undefined) {
+      overviewUi.blueprint = control.dataset.blueprint;
+      overviewUi.page = 0;
+      overviewSig = "";
+      renderOverview();
+      return;
+    }
+    if (control.dataset.making) {
+      const key = control.dataset.making;
+      if (key.startsWith("creation:")) {
+        ui.openCreation(key.slice("creation:".length));
+        return;
+      }
+      overviewUi.detail = overviewUi.detail === key ? "" : key;
+      overviewSig = "";
+      renderOverview();
+      return;
+    }
+    if (control.dataset.rollback && control.dataset.version) {
+      send({ type: "rollback_blueprint", name: control.dataset.rollback, version: Number(control.dataset.version) });
+      showToast(`Rolling ${control.dataset.rollback} back to v${control.dataset.version}.`);
+      return;
+    }
+    if (control.dataset.openCreation) ui.openCreation(control.dataset.openCreation);
+  });
+  openCreationsButton.addEventListener("click", () => {
+    selectedCreation = null;
+    creationSig = "";
+    showTab("creations");
+    renderCreations();
   });
   openAlertsButton.addEventListener("click", () => {
     if (alerts.isOpen()) {
@@ -713,6 +980,8 @@ export function createUI(
     mailbox.hidden = true;
     blueprints.hidden = true;
     growth.hidden = true;
+    creations.hidden = true;
+    overview.hidden = true;
     chat.hidden = true;
     hideDigest();
     alerts.open();
@@ -744,13 +1013,85 @@ export function createUI(
       target.dataset.close === "digest" ||
       target.dataset.close === "alerts" ||
       target.dataset.close === "blueprints" ||
-      target.dataset.close === "growth"
+      target.dataset.close === "growth" ||
+      target.dataset.close === "creations" ||
+      target.dataset.close === "overview" ||
+      target.dataset.close === "pip" ||
+      target.dataset.close === "settings"
     ) {
       closePanels();
     }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closePanels();
+  });
+  creationsBody.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const control = target.closest<HTMLElement>("[data-open-creation], [data-creation-back], [data-star], [data-archive], [data-publish], [data-unpublish]");
+    if (!control) return;
+    if (control.dataset.openCreation) {
+      selectedCreation = control.dataset.openCreation;
+      creationSig = "";
+      renderCreations();
+      return;
+    }
+    if (control.dataset.creationBack !== undefined) {
+      selectedCreation = null;
+      creationSig = "";
+      renderCreations();
+      return;
+    }
+    if (control.dataset.star) {
+      const favourite = control.dataset.favourite !== "1";
+      if (!send({ type: "star_creation", id: control.dataset.star, favourite })) showToast("Not connected.");
+      return;
+    }
+    if (control.dataset.archive) {
+      if (!send({ type: "archive_creation", id: control.dataset.archive })) showToast("Not connected.");
+      return;
+    }
+    if (control.dataset.publish) {
+      if (!send({ type: "publish_creation", id: control.dataset.publish })) showToast("Not connected.");
+      return;
+    }
+    if (control.dataset.unpublish) {
+      if (!send({ type: "unpublish_creation", id: control.dataset.unpublish })) showToast("Not connected.");
+    }
+  });
+  creationsBody.addEventListener("change", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement && target.dataset.public !== undefined) {
+      if (!send({ type: "set_creations_public", enabled: target.checked })) showToast("Not connected.");
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.dataset.filter) {
+      if (target.dataset.filter === "type") creationFilters.type = target.value;
+      if (target.dataset.filter === "season") creationFilters.season = target.value;
+      if (target.dataset.filter === "status") creationFilters.status = target.value;
+      creationSig = "";
+      renderCreations();
+      return;
+    }
+    if (target instanceof HTMLInputElement && target.dataset.filter === "starred") {
+      creationFilters.starred = target.checked;
+      creationSig = "";
+      renderCreations();
+    }
+  });
+  creationsBody.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.dataset.compare === undefined) return;
+    const after = creationsBody.querySelector<HTMLElement>("[data-after]");
+    if (after) after.style.clipPath = `inset(0 ${100 - Number(target.value)}% 0 0)`;
+  });
+  creationsBody.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    event.preventDefault();
+    const megabytes = Number(new FormData(form).get("megabytes"));
+    const type = form.dataset.creations === "max" ? "set_creation_max" : "set_storage_budget";
+    if (!send({ type, megabytes })) showToast("Not connected.");
   });
   growthBody.addEventListener("click", (event) => {
     const target = event.target;
@@ -797,6 +1138,92 @@ export function createUI(
       if (!send({ type: "approve_blueprint", name: target.dataset.approve, version })) showToast("Not connected.");
     }
   });
+  tabWorld.addEventListener("click", () => showTab("world"));
+  statusPill.addEventListener("click", () => ui.openPip());
+  hudInbox.addEventListener("click", () => ui.openMailbox());
+  openSettingsButton.addEventListener("click", () => {
+    chat.hidden = true;
+    pipSheet.hidden = true;
+    digest.hidden = true;
+    settings.hidden = false;
+    refreshScrim();
+    settingsSearch.focus();
+  });
+  retry.addEventListener("click", () => connect());
+  pauseSwitch.addEventListener("click", () => pause.click());
+  settingsSearch.addEventListener("input", () => {
+    const query = settingsSearch.value.trim().toLowerCase();
+    for (const group of settings.querySelectorAll<HTMLElement>(".setting-group")) {
+      const blob = `${group.dataset.keywords ?? ""} ${group.textContent ?? ""}`.toLowerCase();
+      group.hidden = query.length > 0 && !blob.includes(query);
+    }
+  });
+  approvalSwitch.addEventListener("change", () => {
+    if (!send({ type: "set_blueprint_approval", required: approvalSwitch.checked })) showToast("Not connected.");
+  });
+  publicSwitch.addEventListener("change", () => {
+    if (!send({ type: "set_creations_public", enabled: publicSwitch.checked })) showToast("Not connected.");
+  });
+  storageForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const megabytes = Number(new FormData(storageForm).get("megabytes"));
+    if (!send({ type: "set_storage_budget", megabytes })) showToast("Not connected.");
+  });
+  maxForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const megabytes = Number(new FormData(maxForm).get("megabytes"));
+    if (!send({ type: "set_creation_max", megabytes })) showToast("Not connected.");
+  });
+  pipSheet.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const action = target.closest<HTMLElement>("[data-pip]")?.dataset.pip;
+    if (action === "chat") ui.openChat();
+    if (action === "diary") ui.openDiary();
+    if (action === "inbox") ui.openMailbox();
+  });
+  mailboxBody.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const digestButton = target.closest<HTMLElement>("[data-open-digest]");
+    if (digestButton?.dataset.openDigest) {
+      openDigest(Number(digestButton.dataset.openDigest));
+      return;
+    }
+    const settingsButton = target.closest<HTMLElement>("[data-open-settings]");
+    if (settingsButton) {
+      openSettingsButton.click();
+      return;
+    }
+    const approve = target.closest<HTMLButtonElement>("[data-approve]");
+    if (approve?.dataset.approve && approve.dataset.version) {
+      if (!send({ type: "approve_blueprint", name: approve.dataset.approve, version: Number(approve.dataset.version) })) {
+        showToast("Not connected.");
+      }
+    }
+  });
+  const pull = (element: HTMLElement, action: () => void) => {
+    let startY = 0;
+    let armed = false;
+    element.addEventListener("pointerdown", (event) => {
+      armed = element.scrollTop <= 0;
+      startY = event.clientY;
+    });
+    element.addEventListener("pointerup", (event) => {
+      if (!armed) return;
+      armed = false;
+      if (event.clientY - startY > 72) action();
+    });
+  };
+  const refreshLive = () => {
+    connect();
+    overviewSig = "";
+    loadOverview();
+  };
+  pull(diaryBody, refreshLive);
+  pull(mailboxBody, refreshLive);
+  pull(overviewBody, refreshLive);
+  pull(creationsBody, refreshLive);
   mailboxBody.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -845,6 +1272,10 @@ export function createUI(
       });
   });
   void loadChat();
+  const savedTab = sessionStorage.getItem("pips-tab");
+  if (savedTab === "overview" || savedTab === "diary" || savedTab === "creations" || savedTab === "inbox") {
+    showTab(savedTab);
+  }
   window.addEventListener("pips-error", (event) => {
     const detail = (event as CustomEvent<string>).detail;
     if (detail) showToast(detail);

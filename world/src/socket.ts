@@ -19,6 +19,7 @@ import {
   markDiaryRead,
   setBlueprints,
   setBrowsing,
+  setCreations,
   setGrowth,
   setConnected,
   setPaths,
@@ -93,6 +94,10 @@ export function connect(): void {
     }
     if (message.type === "growth") {
       setGrowth(message.growth);
+      return;
+    }
+    if (message.type === "creations") {
+      setCreations(message.creations);
       return;
     }
     if (message.type === "paths") {

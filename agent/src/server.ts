@@ -41,8 +41,23 @@ import { generateDailyDigest, resolveDigestDay } from "./digest.js";
 import { handlePush } from "./push.js";
 import { tickInProgress, runAgentTick } from "./loop.js";
 import { currentWorldState, setSeasonPreview } from "./season.js";
+import { overviewPayload, publicOverviewEnabled } from "./overview.js";
 import { currentTick } from "./tickState.js";
 import { endStudy, growthView, setAwakeHours, setPace, setReadCap } from "./growth.js";
+import {
+  archiveCreation,
+  libraryView,
+  publicCreationsEnabled,
+  publicPage,
+  publishCreation,
+  resolveCreationFile,
+  setCreationMaxMb,
+  setPublicCreations,
+  setStorageBudgetMb,
+  starCreation,
+  unpublishCreation,
+  zipVersion,
+} from "./creations.js";
 import { rescheduleTick } from "./schedule.js";
 
 function snapshot(): SnapshotMessage {
@@ -63,6 +78,7 @@ function snapshot(): SnapshotMessage {
     paths: listPaths(),
     blueprintApproval: blueprintApprovalRequired(),
     growth: growthView(),
+    creations: libraryView(),
   };
 }
 
@@ -96,6 +112,9 @@ function parseClientMessage(raw: string): ClientMessage | null {
     start?: unknown;
     end?: unknown;
     cap?: unknown;
+    favourite?: unknown;
+    enabled?: unknown;
+    megabytes?: unknown;
   };
   if (message.type === "mark_diary_read") return { type: "mark_diary_read" };
   if (message.type === "mark_digest_read" && typeof message.id === "string" && message.id.trim()) {
@@ -129,6 +148,25 @@ function parseClientMessage(raw: string): ClientMessage | null {
   }
   if (message.type === "end_study" && typeof message.id === "string" && message.id.trim()) {
     return { type: "end_study", id: message.id };
+  }
+  if (
+    (message.type === "archive_creation" || message.type === "publish_creation" || message.type === "unpublish_creation") &&
+    typeof message.id === "string" &&
+    message.id.trim()
+  ) {
+    return { type: message.type, id: message.id };
+  }
+  if (message.type === "star_creation" && typeof message.id === "string" && typeof message.favourite === "boolean") {
+    return { type: "star_creation", id: message.id, favourite: message.favourite };
+  }
+  if (message.type === "set_creations_public" && typeof message.enabled === "boolean") {
+    return { type: "set_creations_public", enabled: message.enabled };
+  }
+  if (message.type === "set_storage_budget" && typeof message.megabytes === "number") {
+    return { type: "set_storage_budget", megabytes: message.megabytes };
+  }
+  if (message.type === "set_creation_max" && typeof message.megabytes === "number") {
+    return { type: "set_creation_max", megabytes: message.megabytes };
   }
   if (
     message.type === "decide_request" &&
@@ -258,6 +296,50 @@ function publicAsset(pathname: string): boolean {
   );
 }
 
+function serveCreation(pathname: string, res: http.ServerResponse): boolean {
+  if (pathname === "/public") {
+    const html = publicPage();
+    if (!html) {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("This page is off.");
+      return true;
+    }
+    sendHtml(res, 200, html);
+    return true;
+  }
+  const zip = pathname.match(/^\/creations\/([a-f0-9]{8,36})\/v\/(\d+)\.zip$/);
+  if (zip?.[1] && zip[2]) {
+    const body = zipVersion(zip[1], Number(zip[2]));
+    if (!body) {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("Not found");
+      return true;
+    }
+    res.writeHead(200, {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="${zip[1]}-v${zip[2]}.zip"`,
+      "cache-control": "no-store",
+    });
+    res.end(body);
+    return true;
+  }
+  const file = pathname.match(/^\/(?:public\/)?creations\/([a-f0-9]{8,36})\/v\/(\d+)\/([^/]+)$/);
+  if (!file?.[1] || !file[2] || !file[3]) return false;
+  const found = resolveCreationFile(file[1], Number(file[2]), decodeURIComponent(file[3]), pathname.startsWith("/public/"));
+  if (!found) {
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    res.end("Not found");
+    return true;
+  }
+  const ext = path.extname(found.file).toLowerCase();
+  res.writeHead(200, {
+    "content-type": FILE_TYPES[ext] ?? "application/octet-stream",
+    "cache-control": "no-store",
+  });
+  fs.createReadStream(found.file).pipe(res);
+  return true;
+}
+
 function operatorRoute(method: string | undefined, pathname: string): boolean {
   return method === "POST" && (pathname === "/api/tick" || pathname === "/api/digest");
 }
@@ -323,12 +405,28 @@ export function startServer(): http.Server {
       loggedOut(req, res);
       return;
     }
-    if (authRequired() && !operatorRoute(req.method, pathname) && !authorized(req) && !publicAsset(pathname)) {
+    if (
+      authRequired() &&
+      !operatorRoute(req.method, pathname) &&
+      !authorized(req) &&
+      !publicAsset(pathname) &&
+      !(publicCreationsEnabled() && (pathname === "/public" || pathname.startsWith("/public/"))) &&
+      !(publicOverviewEnabled() && pathname === "/public/overview")
+    ) {
       if (pathname === "/") {
         sendHtml(res, 200, loginPage("form"));
         return;
       }
       sendJson(res, 401, { ok: false, message: "Login required." });
+      return;
+    }
+    if (req.method === "GET" && serveCreation(pathname, res)) return;
+    if (req.method === "GET" && (pathname === "/api/overview" || pathname === "/public/overview")) {
+      if (pathname === "/public/overview" && !publicOverviewEnabled()) {
+        sendJson(res, 404, { ok: false, message: "Not found" });
+        return;
+      }
+      sendJson(res, 200, overviewPayload(pathname === "/api/overview"));
       return;
     }
     if (req.method === "GET" && pathname === "/api/health") {
@@ -519,6 +617,34 @@ export function startServer(): http.Server {
       }
       if (message.type === "set_read_cap") {
         const error = setReadCap(message.cap);
+        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
+        return;
+      }
+      if (message.type === "archive_creation") {
+        const error = archiveCreation(message.id);
+        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
+        return;
+      }
+      if (message.type === "star_creation") {
+        const error = starCreation(message.id, message.favourite);
+        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
+        return;
+      }
+      if (message.type === "publish_creation" || message.type === "unpublish_creation") {
+        const error =
+          message.type === "publish_creation" ? publishCreation(message.id) : unpublishCreation(message.id);
+        if (error) socket.send(JSON.stringify({ type: "error", message: error }));
+        return;
+      }
+      if (message.type === "set_creations_public") {
+        setPublicCreations(message.enabled);
+        return;
+      }
+      if (message.type === "set_storage_budget" || message.type === "set_creation_max") {
+        const error =
+          message.type === "set_storage_budget"
+            ? setStorageBudgetMb(message.megabytes)
+            : setCreationMaxMb(message.megabytes);
         if (error) socket.send(JSON.stringify({ type: "error", message: error }));
         return;
       }

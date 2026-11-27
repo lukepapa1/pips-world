@@ -124,7 +124,7 @@ export function createPip(): Pip {
   tag.textContent = "Pip";
   const label = new CSS2DObject(tag);
   label.center.set(0.5, 1);
-  label.position.set(0, 1.28, 0);
+  label.position.set(0, 1.85, 0);
   root.add(label);
 
   const bubbleEl = document.createElement("div");

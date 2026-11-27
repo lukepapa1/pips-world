@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { BUILDING_NAMES, isBuildingId, type BrowseTool, type WorldEvent } from "@pips/shared";
-import { lastMoveTarget, makeEvent, saveEvents } from "./db.js";
+import { lastMoveTarget, makeEvent, rememberIdentity, saveEvents } from "./db.js";
 import { broadcast } from "./hub.js";
 import type { LookImage, ToolSpec } from "./llm.js";
 import { readMemory, writeMemory } from "./memory.js";
+import { saveStructuredInterests } from "./interests.js";
 import { noteRead, noteSearch, readCap, readsLeft, searchCap, searchesLeft, webCallsPerTick } from "./usage.js";
 import { domainOf, formatSearch, openableUrl, readPage, viewImage, webContent, webSearch } from "./web.js";
 import { runBuild } from "./build.js";
 import { designBlueprint, layPath, previewBlueprint } from "./blueprints.js";
 import { continueStudy, endStudy, saveNote, searchNotes, startStudy } from "./growth.js";
+import { finishCreation, listCreations, openCreation, saveCreation } from "./creations.js";
 
 const TEXT_MAX = 4000;
 const FILE_MAX = 12_000;
@@ -95,9 +97,20 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "update_interests",
     description:
-      "Replace interests.md with the full text you want to keep. You write this file yourself.",
-    parameters: TEXT_SCHEMA,
-    required: ["text"],
+      "Replace interests.md with the full text you want to keep. You write this file yourself. Or pass items, a list of {name, summary, strength, first_seen, last_active, evidence}, and the file is rewritten from that list.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The full text to save, when you are not sending items." },
+        items: {
+          type: "array",
+          description: "Optional structured interests. When present, this list replaces the interest file.",
+          items: { type: "object" },
+        },
+      },
+      required: ["text"],
+    },
+    required: [],
   },
   {
     name: "design_blueprint",
@@ -112,6 +125,7 @@ export const PIP_TOOLS: ToolSpec[] = [
           description: "JSON blueprint. Primitives only.",
           additionalProperties: true,
         },
+        why: { type: "string", description: "Optional sentence on what you changed." },
       },
       required: ["name", "spec"],
     },
@@ -245,6 +259,66 @@ export const PIP_TOOLS: ToolSpec[] = [
     },
     required: ["topic"],
   },
+  {
+    name: "save_creation",
+    description:
+      "Start a creation, or save a new version of an open draft with the same type and title. You choose the subject. Files are an object of file name to text (png may be a base64 data URL).",
+    parameters: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["art", "writing", "design", "game", "site", "mechanic"],
+          description: "What kind of thing this is.",
+        },
+        title: { type: "string", description: "The title you want on it." },
+        files: {
+          type: "object",
+          description: "File name to contents. Art is png or svg. Writing is markdown. Design and mechanic are json. A game or site is static files.",
+          additionalProperties: { type: "string" },
+        },
+        notes: { type: "string", description: "Why you made it, and what you learned." },
+        inspired_by: { type: "string", description: "What you were looking at, if anything. Optional." },
+      },
+      required: ["type", "title", "files"],
+    },
+    required: ["type", "title"],
+  },
+  {
+    name: "list_creations",
+    description: "List creations. Filter by a type, a status, a season, starred, or archived. Leave the filter empty to see what is not archived.",
+    parameters: {
+      type: "object",
+      properties: {
+        filter: { type: "string", description: "Optional filter." },
+      },
+    },
+    required: [],
+  },
+  {
+    name: "open_creation",
+    description: "Read one creation: notes, versions, and the text of its files.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Creation id." },
+      },
+      required: ["id"],
+    },
+    required: ["id"],
+  },
+  {
+    name: "finish_creation",
+    description: "Mark a draft finished so it can be shown in the gallery. You do not publish it.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Creation id." },
+      },
+      required: ["id"],
+    },
+    required: ["id"],
+  },
 ];
 
 export const DIARY_TOOL = PIP_TOOLS.filter((tool) => tool.name === "write_diary");
@@ -297,11 +371,20 @@ export async function executeTool(
     case "update_identity":
       return updateFile("identity.md", args);
     case "update_interests":
+      if (args.items !== undefined) {
+        const error = saveStructuredInterests(args.items);
+        return error ? { result: error, kind: null } : { result: "Interests updated from the list you sent.", kind: "interests" };
+      }
       return updateFile("interests.md", args);
     case "build":
       return runBuild(args, tick);
     case "design_blueprint":
-      return designBlueprint(typeof args.name === "string" ? args.name : "", args.spec, tick);
+      return designBlueprint(
+        typeof args.name === "string" ? args.name : "",
+        args.spec,
+        tick,
+        typeof args.why === "string" ? args.why : undefined,
+      );
     case "preview_blueprint":
       return previewBlueprint(typeof args.name === "string" ? args.name : "", tick);
     case "lay_path":
@@ -316,6 +399,14 @@ export async function executeTool(
       return saveNote(args.topic, args.text, args.sources);
     case "search_notes":
       return searchNotes(args.topic);
+    case "save_creation":
+      return runSaveCreation(args, tick);
+    case "list_creations":
+      return { result: listCreations(args.filter), kind: null };
+    case "open_creation":
+      return { result: openCreation(args.id), kind: null };
+    case "finish_creation":
+      return runFinishCreation(args, tick);
     default:
       return { result: "Unknown tool.", kind: null };
   }
@@ -435,6 +526,34 @@ async function runView(
   }
 }
 
+function runSaveCreation(args: Record<string, unknown>, tick: number): ToolOutcome {
+  const saved = saveCreation({
+    type: args.type,
+    title: args.title,
+    files: args.files,
+    notes: args.notes,
+    inspiredBy: args.inspired_by,
+    tick,
+  });
+  let result = saved.result;
+  if (saved.events.some((event) => event.kind === "creation_started")) {
+    const from = lastMoveTarget();
+    if (from !== "workshop") {
+      publish(makeEvent<Extract<WorldEvent, { kind: "move" }>>("move", { from, to: "workshop" }, tick));
+      const fromName = from ? BUILDING_NAMES[from] : null;
+      result = `${fromName ? `You walked from ${fromName} to the Workshop.` : "You walked to the Workshop."} ${result}`;
+    }
+  }
+  for (const event of saved.events) publish(event);
+  return { result, kind: saved.events[0]?.kind ?? null };
+}
+
+function runFinishCreation(args: Record<string, unknown>, tick: number): ToolOutcome {
+  const finished = finishCreation(args.id, tick);
+  for (const event of finished.events) publish(event);
+  return { result: finished.result, kind: finished.events[0]?.kind ?? null };
+}
+
 function moveTo(args: Record<string, unknown>, tick: number): ToolOutcome {
   const place = args.place;
   if (!isBuildingId(place)) {
@@ -487,7 +606,9 @@ function writeJournal(args: Record<string, unknown>, tick: number, flags: ToolFl
 function updateFile(file: "identity.md" | "interests.md", args: Record<string, unknown>): ToolOutcome {
   const parsed = textOf(args, FILE_MAX);
   if ("error" in parsed) return { result: parsed.error, kind: null };
+  const before = file === "identity.md" ? readMemory(file) : "";
   writeMemory(file, parsed.text);
+  if (file === "identity.md") rememberIdentity(before, parsed.text);
   const label = file === "identity.md" ? "Identity" : "Interests";
   return { result: `${label} file replaced.${parsed.note}`, kind: file === "identity.md" ? "identity" : "interests" };
 }

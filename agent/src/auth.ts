@@ -158,14 +158,16 @@ export function loginPage(state: "form" | "bad" | "limited" | "off"): string {
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Pip's World</title>
   <style>
-    body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; background: #b7d4ea; color: #2a241c; font-family: "Avenir Next", "Segoe UI", sans-serif; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
-    main { width: min(360px, calc(100% - 32px)); background: #f6f0e4; border-radius: 22px; padding: 28px 24px; box-shadow: 0 16px 40px rgba(48, 32, 16, 0.16); }
-    h1 { font-family: Georgia, serif; font-size: 1.8rem; margin: 0 0 8px; }
-    p { margin: 0 0 16px; color: #7a6e60; }
-    label { display: block; font-size: 0.85rem; margin-bottom: 6px; }
-    input { width: 100%; box-sizing: border-box; border: 1px solid #d9c7ae; border-radius: 999px; padding: 10px 14px; font: inherit; }
-    button { margin-top: 14px; border: 0; border-radius: 999px; padding: 10px 18px; background: #2c455c; color: #f7f4ee; font: inherit; cursor: pointer; }
-    a { color: #2c455c; }
+    :root { color-scheme: light; --ink: #2a241c; --ink-soft: #5c5146; --paper: #f6f0e4; --paper-raised: #fffaf3; --line: #e4d5c0; --moss: #2f6b4f; --moss-ink: #f7f4ee; --navy: #2c455c; --sky: #b7d4ea; --shadow: 0 12px 32px rgba(48, 32, 16, 0.14); }
+    @media (prefers-color-scheme: dark) { :root { color-scheme: dark; --ink: #f6f0e4; --ink-soft: #d4c6b4; --paper: #241e18; --paper-raised: #322922; --line: #4a3d32; --moss: #7dba98; --moss-ink: #1a241c; --navy: #b7d4ea; --sky: #1c2830; --shadow: 0 12px 32px rgba(0, 0, 0, 0.35); } }
+    body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; background: var(--sky); color: var(--ink); font-family: "Source Sans 3", "Avenir Next", "Segoe UI", sans-serif; font-size: 16px; line-height: 1.45; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+    main { width: min(360px, calc(100% - 32px)); background: var(--paper); border-radius: 22px; padding: 32px 24px; box-shadow: var(--shadow); }
+    h1 { font-family: Nunito, "Avenir Next", sans-serif; font-size: 28px; font-weight: 700; line-height: 1.2; margin: 0 0 8px; }
+    p { margin: 0 0 16px; color: var(--ink-soft); }
+    label { display: block; font-family: Nunito, "Avenir Next", sans-serif; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    input { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: var(--paper-raised); color: var(--ink); font: inherit; }
+    button { margin-top: 16px; min-height: 44px; border: 0; border-radius: 999px; padding: 8px 18px; background: var(--moss); color: var(--moss-ink); font-family: Nunito, "Avenir Next", sans-serif; font-size: 16px; font-weight: 700; cursor: pointer; }
+    a { color: var(--navy); }
   </style>
 </head>
 <body>

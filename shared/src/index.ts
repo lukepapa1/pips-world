@@ -1,4 +1,5 @@
 import type { BlueprintRecord, PathRecord } from "./blueprint.js";
+import type { CreationsLibrary } from "./creations.js";
 import type { GrowthPace, GrowthView } from "./growth.js";
 import type { BuildAction, WorldObject } from "./objects.js";
 
@@ -30,6 +31,23 @@ export {
 export { STARTER_BLUEPRINTS } from "./catalogue.js";
 export type { GrowthPace, GrowthPlanView, GrowthSlot, GrowthView } from "./growth.js";
 export { GROWTH_PACES, isGrowthPace } from "./growth.js";
+export type {
+  CreationFileInfo,
+  CreationStatus,
+  CreationType,
+  CreationVersionView,
+  CreationView,
+  CreationsLibrary,
+} from "./creations.js";
+export {
+  CREATION_STATUSES,
+  CREATION_TYPES,
+  galleryPicks,
+  isCreationStatus,
+  isCreationType,
+  isCreationView,
+  studioDrafts,
+} from "./creations.js";
 export {
   BUILDABLE,
   BUILDING_SLOTS,
@@ -231,6 +249,10 @@ export type WorldEvent =
         version: number;
         status: "live" | "pending" | "archived";
       };
+    })
+  | (EventBase & {
+      kind: "creation_started" | "creation_updated" | "creation_finished";
+      payload: { creationId: string; type: string; title: string; version: number };
     });
 
 export type BrowseTool = "web_search" | "read_page" | "view_image";
@@ -303,6 +325,7 @@ export type SnapshotMessage = {
   paths: PathRecord[];
   blueprintApproval: boolean;
   growth: GrowthView;
+  creations: CreationsLibrary;
 };
 
 export type ServerMessage =
@@ -317,6 +340,7 @@ export type ServerMessage =
   | { type: "blueprints"; blueprints: BlueprintRecord[]; blueprintApproval: boolean }
   | { type: "paths"; paths: PathRecord[] }
   | { type: "growth"; growth: GrowthView }
+  | { type: "creations"; creations: CreationsLibrary }
   | { type: "error"; message: string };
 
 export type ClientMessage =
@@ -331,7 +355,14 @@ export type ClientMessage =
   | { type: "set_growth_pace"; pace: GrowthPace }
   | { type: "set_awake_hours"; start: number; end: number }
   | { type: "set_read_cap"; cap: number }
-  | { type: "end_study"; id: string };
+  | { type: "end_study"; id: string }
+  | { type: "archive_creation"; id: string }
+  | { type: "star_creation"; id: string; favourite: boolean }
+  | { type: "publish_creation"; id: string }
+  | { type: "unpublish_creation"; id: string }
+  | { type: "set_creations_public"; enabled: boolean }
+  | { type: "set_storage_budget"; megabytes: number }
+  | { type: "set_creation_max"; megabytes: number };
 
 const EVENT_KINDS = new Set([
   "move",
@@ -346,6 +377,9 @@ const EVENT_KINDS = new Set([
   "browse",
   "build",
   "blueprint",
+  "creation_started",
+  "creation_updated",
+  "creation_finished",
 ]);
 
 export function isWorldEvent(value: unknown): value is WorldEvent {

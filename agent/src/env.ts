@@ -37,10 +37,13 @@ function configuredDir(name: string): string {
   return path.join(root, name);
 }
 
-export function sqliteFile(): string {
+export function dataDir(): string {
   const raw = process.env.DATA_DIR?.trim();
-  if (raw) return path.join(path.resolve(raw), "pips.sqlite");
-  return path.join(repoRoot(), "data", "pips.sqlite");
+  return raw ? path.resolve(raw) : path.join(repoRoot(), "data");
+}
+
+export function sqliteFile(): string {
+  return path.join(dataDir(), "pips.sqlite");
 }
 
 export function memoryDir(): string {

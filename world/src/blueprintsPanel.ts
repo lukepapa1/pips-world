@@ -12,7 +12,7 @@ export function blueprintMarkup(state: ClientState): string {
   const checked = state.blueprintApproval ? "checked" : "";
   const approval = `<label class="approval"><input type="checkbox" data-approval="required" ${checked} /> Require approval before a new version goes live</label>`;
   const names = [...new Set(state.blueprints.map((record) => record.name))].sort();
-  if (names.length === 0) return `${approval}<p class="empty">No blueprints yet.</p>`;
+  if (names.length === 0) return `${approval}<div class="empty-state"><h3>No blueprints yet.</h3><p>Versions Pip designs will show up here.</p></div>`;
   const groups = names
     .map((name) => {
       const versions = state.blueprints

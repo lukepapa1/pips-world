@@ -9,7 +9,7 @@
     "tick": "tsx src/tick-cli.ts",
     "digest": "tsx src/digest-cli.ts",
     "check": "tsc --noEmit",
-    "test": "tsx --test src/clock.test.ts src/blueprint.test.ts src/growth.test.ts"
+    "test": "tsx --test src/clock.test.ts src/blueprint.test.ts src/growth.test.ts src/creations.test.ts src/overview.test.ts"
   },
   "dependencies": {
     "@pips/shared": "*",

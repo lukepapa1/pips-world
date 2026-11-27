@@ -10,6 +10,7 @@ import {
   type DiaryRow,
   type DigestRow,
   type JournalRow,
+  type CreationsLibrary,
   type GrowthView,
   type PathRecord,
   type RequestRow,
@@ -40,6 +41,7 @@ export type ClientState = {
   paths: PathRecord[];
   blueprintApproval: boolean;
   growth: GrowthView | null;
+  creations: CreationsLibrary | null;
 };
 
 const listeners = new Set<(state: ClientState) => void>();
@@ -63,6 +65,7 @@ let state: ClientState = {
   paths: [],
   blueprintApproval: false,
   growth: null,
+  creations: null,
 };
 
 export function getState(): ClientState {
@@ -112,7 +115,12 @@ export function loadSnapshot(message: SnapshotMessage): void {
     paths: Array.isArray(message.paths) ? message.paths.filter(isPathRecord) : [],
     blueprintApproval: message.blueprintApproval === true,
     growth: message.growth ?? state.growth,
+    creations: message.creations ?? state.creations,
   });
+}
+
+export function setCreations(creations: CreationsLibrary): void {
+  commit({ ...state, creations, placement: "none" });
 }
 
 export function setGrowth(growth: GrowthView): void {
@@ -206,6 +214,9 @@ export function applyEvent(event: WorldEvent): void {
     case "browse":
     case "build":
     case "blueprint":
+    case "creation_started":
+    case "creation_updated":
+    case "creation_finished":
       break;
   }
 
