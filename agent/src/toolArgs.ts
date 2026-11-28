@@ -144,9 +144,14 @@ function coerceNumbers(spec: ToolSpec, args: Record<string, unknown>): Record<st
   const next: Record<string, unknown> = { ...args };
   const parameters = spec.parameters as { properties?: Record<string, { type?: unknown }> };
   for (const [key, schema] of Object.entries(parameters.properties ?? {})) {
-    if (schema.type !== "number") continue;
-    const parsed = numberOf(next[key]);
-    if (parsed !== null) next[key] = parsed;
+    if (schema.type === "number") {
+      const parsed = numberOf(next[key]);
+      if (parsed !== null) next[key] = parsed;
+    }
+    if ((schema.type === "object" || schema.type === "array") && typeof next[key] === "string") {
+      const parsed = looseJson(next[key]);
+      if (parsed !== null && typeof parsed === "object") next[key] = parsed;
+    }
   }
   return next;
 }

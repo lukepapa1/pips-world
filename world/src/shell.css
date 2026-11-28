@@ -43,7 +43,26 @@ button { min-height: 44px; }
   pointer-events: none;
 }
 
-#hud button, #status-pill, #chat-fab, #tabbar, #connection-error, #world-tools, #plot-map { pointer-events: auto; }
+#hud button, #status-pill, #chat-fab, #tabbar, #connection-error, #world-tools, #plot-map, #leave-building { pointer-events: auto; }
+
+#leave-building {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  z-index: 7;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: Nunito, "Avenir Next", sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+
+#leave-building[hidden] { display: none !important; }
 
 #world-tools {
   position: absolute;

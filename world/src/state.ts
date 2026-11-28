@@ -47,6 +47,7 @@ export type ClientState = {
   growth: GrowthView | null;
   creations: CreationsLibrary | null;
   plots: PlotRecord[];
+  displays: { creationId: string; building: string; slot: string }[];
   wander: Wander | null;
 };
 
@@ -73,6 +74,7 @@ let state: ClientState = {
   growth: null,
   creations: null,
   plots: [],
+  displays: [],
   wander: null,
 };
 
@@ -137,6 +139,7 @@ export function loadSnapshot(message: SnapshotMessage): void {
     growth: message.growth ?? state.growth,
     creations: message.creations ?? state.creations,
     plots: Array.isArray(message.plots) ? message.plots.filter(isPlotRecord) : state.plots,
+    displays: Array.isArray(message.displays) ? message.displays : [],
     wander: wanderFrom(events),
   });
 }

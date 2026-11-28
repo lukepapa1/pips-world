@@ -11,9 +11,10 @@ import {
   STARTER_BLUEPRINTS,
   liveSpec,
   starterObjects,
-  galleryPicks,
-  studioDrafts,
+  autoAssign,
+  villageBuilding,
   type BlueprintRecord,
+  type BuildingBody,
   type BlueprintSpec,
   type BuildingId,
   type CreationView,
@@ -22,15 +23,17 @@ import {
   type WorldObject,
 } from "@pips/shared";
 import { layBlueprintCopies, makeBlueprintMesh } from "./blueprintMesh";
-import { syncGallery, syncStudio, updateStudioFx } from "./studio";
+import { updateStudioFx } from "./studio";
+import { fillSlots, makeBuildingMesh, setCutaway, setOccupant, setWindowsGlow, type SlotVisual } from "./buildingMesh";
 import { makePiece } from "./pieces";
 import type { Quality } from "./quality";
 
-export type WorldAction = "diary" | "mailbox" | "studio" | "gallery" | { kind: "creation"; id: string };
+export type WorldAction = "diary" | "mailbox" | "studio" | "gallery" | { kind: "creation"; id: string } | { kind: "enter"; id: string };
 
 export type Stand = {
   stand: THREE.Vector3;
   door: THREE.Vector3;
+  inside: THREE.Vector3;
 };
 
 const RADIUS = VILLAGE_RADIUS;
@@ -228,7 +231,7 @@ function starterSpec(name: string): BlueprintSpec {
 }
 
 function shellFrom(spec: BlueprintSpec, name: string): THREE.Group {
-  const shell = makeBlueprintMesh(spec, "");
+  const shell = spec.building ? makeBuildingMesh(spec.building) : makeBlueprintMesh(spec, "");
   shell.name = `${name}-shell`;
   return shell;
 }
@@ -239,17 +242,12 @@ function hangSign(group: THREE.Group, text: string, x: number, y: number, z: num
   group.add(board);
 }
 
-function place(group: THREE.Group, id: BuildingId): Stand {
+function place(group: THREE.Group, id: BuildingId): void {
   const angle = slotAngle(SLOT[id]);
   const x = Math.cos(angle) * RADIUS;
   const z = Math.sin(angle) * RADIUS;
   group.position.set(x, 0, z);
   group.rotation.y = Math.atan2(-x, -z);
-  const standRadius = RADIUS - 2.55;
-  return {
-    stand: new THREE.Vector3(Math.cos(angle) * standRadius, 0, Math.sin(angle) * standRadius),
-    door: new THREE.Vector3(x, 0.7, z),
-  };
 }
 
 const FLOWER_HIGH = 64;
@@ -268,11 +266,14 @@ export type Village = {
   setSeason(weights: Record<Season, number>): void;
   setQuality(quality: Quality): void;
   syncObjects(objects: WorldObject[], blueprints?: BlueprintRecord[], paths?: PathRecord[]): void;
-  syncCreations(items: CreationView[]): void;
+  syncCreations(items: CreationView[], notes?: string[], displays?: { creationId: string; building: string; slot: string }[]): void;
   dressLabels(camera: THREE.Camera): void;
   setFocus(id: BuildingId | null): void;
   route(from: BuildingId | null, to: BuildingId): THREE.Vector3[];
   frontView(id: BuildingId): { position: THREE.Vector3; target: THREE.Vector3 };
+  interiorView(id: string): { position: THREE.Vector3; target: THREE.Vector3 } | null;
+  setEntered(id: string | null, amount: number): void;
+  setOccupied(id: BuildingId | null, insideView: boolean): void;
 };
 
 export function createVillage(scene: THREE.Scene, quality: Quality): Village {
@@ -356,133 +357,59 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
   }
   const smoke: THREE.Mesh[] = [];
 
-  const home = new THREE.Group();
-  home.name = "home";
-  home.userData.action = "diary";
-  home.add(box(2.5, 1.55, 2.05, cream, 0, 0.775, 0));
-  const homeRoof = new THREE.Mesh(gable(2.95, 2.45, 0.95), roofHome);
-  homeRoof.position.y = 1.55;
-  homeRoof.castShadow = true;
-  home.add(homeRoof);
-  home.add(box(0.34, 0.7, 0.34, mat("#8d4a3a"), 0.72, 2.05, -0.35));
-  home.add(box(0.42, 0.16, 0.42, mat("#6d4034"), 0.72, 2.42, -0.35));
-  home.add(box(1.05, 1.15, 0.08, mat("#3d2a24"), 0, 0.62, 0.15));
-  home.add(box(1.2, 0.1, 0.12, trim, 0, 1.22, 1.05));
-  home.add(box(0.1, 1.15, 0.12, trim, -0.55, 0.62, 1.05));
-  home.add(box(0.1, 1.15, 0.12, trim, 0.55, 0.62, 1.05));
-  home.add(box(0.36, 0.42, 0.06, glassWarm, -0.78, 0.95, 1.04));
-  home.add(box(0.36, 0.42, 0.06, glassWarm, 0.78, 0.95, 1.04));
-  home.add(box(0.62, 0.46, 0.46, doorMat, 0.78, 0.23, 1.42));
-  const book = makeBook();
-  book.position.set(0.78, 0.52, 1.42);
-  book.rotation.y = -0.6;
-  home.add(book);
-  for (let i = 0; i < 3; i += 1) {
-    const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(0.1, 8, 6),
-      mat("#f7f4ee", { transparent: true, opacity: 0.3, depthWrite: false, roughness: 1 }),
-    );
-    puff.position.set(0.72, 2.5, -0.35);
-    home.add(puff);
-    smoke.push(puff);
+  const shellName: Record<BuildingId, string> = {
+    home: "home",
+    library: "library",
+    workshop: "studio",
+    gallery: "gallery",
+    mailbox: "mailbox",
+  };
+  const buildings = {} as Record<BuildingId, THREE.Group>;
+  const shells = new Map<string, THREE.Group>();
+  const badges: Partial<Record<BuildingId, HTMLSpanElement>> = { home: diaryBadge, mailbox: mailboxBadge };
+
+  function mountFixed(id: BuildingId): void {
+    const group = new THREE.Group();
+    group.name = id;
+    group.userData.enterId = id;
+    const name = shellName[id];
+    const shell = shellFrom(starterSpec(name), name);
+    group.add(shell);
+    shells.set(name, shell);
+    const body = shell.userData.spec as BuildingBody | undefined;
+    if (body?.chimney) {
+      for (let i = 0; i < 3; i += 1) {
+        const puff = new THREE.Mesh(
+          new THREE.SphereGeometry(0.1, 8, 6),
+          mat("#f7f4ee", { transparent: true, opacity: 0.3, depthWrite: false, roughness: 1 }),
+        );
+        puff.position.set(body.footprint.width * 0.22, body.floors === 2 ? 3.5 : 2.45, -body.footprint.depth * 0.12);
+        group.add(puff);
+        smoke.push(puff);
+      }
+    }
+    const label = id === "workshop" ? "Studio" : BUILDING_NAMES[id];
+    addName(group, id, label, badges[id]);
+    place(group, id);
+    scene.add(group);
+    pickables.push(group);
+    buildings[id] = group;
   }
-  hangSign(home, BUILDING_NAMES.home, 0, 2.28, 1.18);
-  addName(home, "home", BUILDING_NAMES.home, diaryBadge);
-  stands.home = place(home, "home");
-  scene.add(home);
-  pickables.push(home);
+  for (const id of ["home", "library", "workshop", "gallery", "mailbox"] as BuildingId[]) mountFixed(id);
 
-  const library = new THREE.Group();
-  library.name = "library";
-  library.add(box(2.3, 2.2, 1.9, stone, 0, 1.1, 0));
-  const libraryRoof = new THREE.Mesh(gable(2.7, 2.3, 0.85), roofLibrary);
-  libraryRoof.position.y = 2.2;
-  libraryRoof.castShadow = true;
-  library.add(libraryRoof);
-  library.add(box(0.22, 1.35, 0.22, trim, -0.78, 0.68, 0.98));
-  library.add(box(0.22, 1.35, 0.22, trim, 0.78, 0.68, 0.98));
-  library.add(box(0.7, 1.15, 0.08, doorMat, 0, 0.58, 0.98));
-  library.add(box(0.34, 0.46, 0.06, libraryGlass, -0.55, 1.45, 0.98));
-  library.add(box(0.34, 0.46, 0.06, libraryGlass, 0.55, 1.45, 0.98));
-  library.add(box(0.34, 0.46, 0.06, libraryGlass, -0.55, 0.85, 0.98));
-  library.add(box(0.34, 0.46, 0.06, libraryGlass, 0.55, 0.85, 0.98));
   const libraryLight = new THREE.PointLight("#ffd089", 0, 9, 1.4);
-  libraryLight.position.set(0, 1.5, 1.4);
-  library.add(libraryLight);
-  hangSign(library, BUILDING_NAMES.library, 0, 2.55, 1.12);
-  addName(library, "library", BUILDING_NAMES.library);
-  stands.library = place(library, "library");
-  scene.add(library);
-
-  const workshop = new THREE.Group();
-  workshop.name = "workshop";
-  workshop.userData.action = "studio";
-  const studioShell = shellFrom(starterSpec("studio"), "studio");
-  workshop.add(studioShell);
-  const workSpot = new THREE.Mesh(
-    new THREE.RingGeometry(0.16, 0.28, 18),
-    mat("#e7c27a", { roughness: 0.65, side: THREE.DoubleSide }),
-  );
-  workSpot.name = "work-spot";
-  workSpot.rotation.x = -Math.PI / 2;
-  workSpot.position.set(0.35, 0.1, 1.65);
-  workSpot.receiveShadow = true;
-  workshop.add(workSpot);
-  const studioWork = new THREE.Group();
-  studioWork.name = "studio-work";
-  workshop.add(studioWork);
-  pickables.push(workshop, studioWork);
-  hangSign(workshop, "Studio", -1.55, 1.55, 2.48);
+  libraryLight.position.set(0, 1.6, 0.2);
+  buildings.library.add(libraryLight);
   const studioFill = new THREE.PointLight("#fff4e2", 0.85, 8, 1.5);
-  studioFill.position.set(0, 1.7, 1.1);
+  studioFill.position.set(0, 1.7, 0.4);
   const studioLamp = new THREE.PointLight("#ffb15a", 0, 5.5, 1.8);
-  studioLamp.position.set(-2.15, 1.1, 1.9);
-  workshop.add(studioFill, studioLamp);
-  addName(workshop, "workshop", "Studio");
-  stands.workshop = place(workshop, "workshop");
-  scene.add(workshop);
-
-  const gallery = new THREE.Group();
-  gallery.name = "gallery";
-  gallery.userData.action = "gallery";
-  const galleryShell = shellFrom(starterSpec("gallery"), "gallery");
-  gallery.add(galleryShell);
-  const galleryShows = new THREE.Group();
-  galleryShows.name = "gallery-shows";
-  gallery.add(galleryShows);
+  studioLamp.position.set(-1.6, 1.3, 1.2);
+  buildings.workshop.add(studioFill, studioLamp);
   const gallerySpot = new THREE.SpotLight("#fff6e4", 1.8, 8, 0.7, 0.45, 1.2);
-  gallerySpot.position.set(0.1, 2.45, 0.6);
-  gallerySpot.target.position.set(-1.35, 0.9, -1.55);
+  gallerySpot.position.set(0.1, 2.2, 0.4);
+  gallerySpot.target.position.set(0, 1.0, -0.4);
   gallerySpot.castShadow = false;
-  gallery.add(gallerySpot, gallerySpot.target);
-  pickables.push(gallery, galleryShows);
-  hangSign(gallery, "Gallery", 0, 1.68, 2.38);
-  addName(gallery, "gallery", BUILDING_NAMES.gallery);
-  stands.gallery = place(gallery, "gallery");
-  scene.add(gallery);
-
-  const mailbox = new THREE.Group();
-  mailbox.name = "mailbox";
-  mailbox.userData.action = "mailbox";
-  mailbox.add(box(1.7, 1.45, 1.55, mailWall, 0, 0.725, 0));
-  const mailRoof = new THREE.Mesh(gable(2.05, 1.9, 0.7), roofMail);
-  mailRoof.position.y = 1.45;
-  mailRoof.castShadow = true;
-  mailbox.add(mailRoof);
-  mailbox.add(box(0.55, 0.9, 0.08, doorMat, 0, 0.45, 0.8));
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.7, 6), doorMat);
-  post.position.set(0.95, 0.35, 0.95);
-  post.castShadow = true;
-  mailbox.add(post);
-  mailbox.add(box(0.42, 0.26, 0.22, mat("#c23b3b"), 0.95, 0.78, 0.95));
-  const flag = box(0.05, 0.28, 0.16, mat("#e23d3d"), 1.18, 0.98, 0.95);
-  flag.rotation.z = -0.4;
-  mailbox.add(flag);
-  hangSign(mailbox, BUILDING_NAMES.mailbox, 0, 1.82, 1.05);
-  addName(mailbox, "mailbox", BUILDING_NAMES.mailbox, mailboxBadge);
-  stands.mailbox = place(mailbox, "mailbox");
-  scene.add(mailbox);
-  pickables.push(mailbox);
+  buildings.gallery.add(gallerySpot, gallerySpot.target);
 
   const lampMat = mat("#ffd7a1", { emissive: "#ffb15a", emissiveIntensity: 0, roughness: 0.35 });
   const lampPost = mat("#4a3a30", { roughness: 0.9 });
@@ -494,10 +421,10 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     bulb.position.set(x, y, z);
     group.add(post, bulb);
   }
-  addLamp(home, -1.05, 1.15, 1.12);
-  addLamp(library, -1.05, 1.55, 1.05);
-  addLamp(gallery, -1.85, 1.15, 1.85);
-  addLamp(mailbox, -0.85, 1.05, 0.95);
+  addLamp(buildings.home, -1.15, 1.15, 1.35);
+  addLamp(buildings.library, -1.05, 1.7, 1.15);
+  addLamp(buildings.gallery, -1.9, 1.15, 1.9);
+  addLamp(buildings.mailbox, -0.9, 1.05, 1.05);
   const junctionLamps = new THREE.Group();
   scene.add(junctionLamps);
   for (const id of Object.keys(SLOT) as BuildingId[]) {
@@ -506,26 +433,17 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     addLamp(junctionLamps, Math.cos(angle) * radius, 1.28, Math.sin(angle) * radius);
   }
 
-  const buildings: Record<BuildingId, THREE.Group> = { home, library, workshop, gallery, mailbox };
-  const shells = new Map<string, THREE.Group>([
-    ["studio", studioShell],
-    ["gallery", galleryShell],
-  ]);
-  const standLocal: Record<BuildingId, { x: number; z: number; lookX: number; lookZ: number }> = {
-    home: { x: 0, z: 1.9, lookX: 0, lookZ: 0.3 },
-    library: { x: 0, z: 1.75, lookX: 0, lookZ: 0.2 },
-    workshop: { x: 0.35, z: 1.65, lookX: -0.17, lookZ: 0.9 },
-    gallery: { x: 0, z: 2.65, lookX: 0, lookZ: 0.4 },
-    mailbox: { x: 0, z: 1.65, lookX: 0, lookZ: 0.15 },
-  };
-
-  function poseStand(id: BuildingId): void {
+    function poseStand(id: BuildingId): void {
     const group = buildings[id];
-    const local = standLocal[id];
-    const stand = group.localToWorld(new THREE.Vector3(local.x, 0, local.z));
+    const shell = shells.get(shellName[id]);
+    const doorLocal = shell?.userData.doorLocal instanceof THREE.Vector3 ? shell.userData.doorLocal : new THREE.Vector3(0, 0, 2);
+    const activity = shell?.userData.activity instanceof THREE.Vector3 ? shell.userData.activity : new THREE.Vector3(0, 0, 0.4);
+    const stand = group.localToWorld(doorLocal.clone());
     stand.y = 0;
-    const door = group.localToWorld(new THREE.Vector3(local.lookX, 0.8, local.lookZ));
-    stands[id] = { stand, door };
+    const inside = group.localToWorld(activity.clone());
+    inside.y = 0;
+    const door = group.localToWorld(new THREE.Vector3(doorLocal.x * 0.25, 0.8, doorLocal.z * 0.35));
+    stands[id] = { stand, door, inside };
   }
   for (const id of Object.keys(buildings) as BuildingId[]) poseStand(id);
 
@@ -547,7 +465,9 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
       });
     }
     for (const id of Object.keys(SLOT) as BuildingId[]) {
-      const front = buildings[id].localToWorld(new THREE.Vector3(0, 0, id === "workshop" || id === "gallery" ? 2.3 : 1.75));
+      const shell = shells.get(shellName[id]);
+      const door = shell?.userData.doorLocal instanceof THREE.Vector3 ? shell.userData.doorLocal : new THREE.Vector3(0, 0, 2);
+      const front = buildings[id].localToWorld(door.clone());
       const end = Math.hypot(front.x, front.z);
       const angle = Math.atan2(front.z, front.x);
       for (let radius = 4.55; radius < end - 0.15; radius += 0.48) {
@@ -752,10 +672,12 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     glows.push(ring);
   }
 
-  function adoptShell(name: "studio" | "gallery", host: THREE.Group, blueprints: BlueprintRecord[]): void {
+  function adoptShell(id: BuildingId, blueprints: BlueprintRecord[]): void {
+    const name = shellName[id];
+    const host = buildings[id];
     const live = liveSpec(blueprints, name);
     const spec = live?.spec ?? starterSpec(name);
-    const key = `${name}@${live?.version ?? 0}:${spec.primitives.length}`;
+    const key = `${name}@${live?.version ?? 0}:${spec.building ? "building" : spec.primitives.length}`;
     if (host.userData.shellKey === key) return;
     host.userData.shellKey = key;
     const previous = shells.get(name);
@@ -766,11 +688,29 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     const next = shellFrom(spec, name);
     host.add(next);
     shells.set(name, next);
+    poseStand(id);
+  }
+
+  let openBuilding: string | null = null;
+  function applyEntered(id: string | null, amount: number): void {
+    openBuilding = id;
+    for (const buildingId of Object.keys(buildings) as BuildingId[]) {
+      const shell = shells.get(shellName[buildingId]);
+      const open = id === buildingId;
+      if (shell) setCutaway(shell, open, open ? amount : 0);
+      buildings[buildingId].visible = id === null || open;
+    }
+    for (const [objectId, group] of dynamic) {
+      const open = id === objectId;
+      if (group.userData.spec) setCutaway(group, open, open ? amount : 0);
+      group.visible = id === null || open;
+    }
+    pathRoot.visible = id === null;
+    junctionLamps.visible = id === null;
   }
 
   function syncObjects(objects: WorldObject[], blueprints: BlueprintRecord[] = [], paths: PathRecord[] = []): void {
-    adoptShell("studio", workshop, blueprints);
-    adoptShell("gallery", gallery, blueprints);
+    for (const id of Object.keys(buildings) as BuildingId[]) adoptShell(id, blueprints);
     const pathLive = liveSpec(blueprints, "path_tile");
     const nextPathKey = pathLive ? `path@${pathLive.version}:${pathLive.spec.primitives.length}` : "starter";
     if (nextPathKey !== pathKey) {
@@ -804,6 +744,11 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
       if (!group) {
         group = live ? makeBlueprintMesh(live.spec, object.style) : isBuildable(object.type) ? makePiece(object.type, object.style) : new THREE.Group();
         group.userData.specKey = specKey;
+        if (live?.spec.building) {
+          group.userData.enterId = object.id;
+          group.userData.blueprintName = name;
+          pickables.push(group);
+        }
         scene.add(group);
         dynamic.set(object.id, group);
       }
@@ -815,14 +760,17 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
       touchGlow(group, object.createdAt);
     }
     for (const id of Object.keys(buildings) as BuildingId[]) {
-      if (!shownBuildings.has(id)) buildings[id].visible = false;
+      if (!shownBuildings.has(id)) buildings[id].visible = true;
     }
     for (const [id, group] of dynamic) {
       if (seen.has(id)) continue;
       scene.remove(group);
+      const index = pickables.indexOf(group);
+      if (index >= 0) pickables.splice(index, 1);
       disposeGroup(group);
       dynamic.delete(id);
     }
+    if (openBuilding) applyEntered(openBuilding, 1);
     rememberLeaves();
   }
   const placedFlowers = flowerCursor;
@@ -893,6 +841,8 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     glassCool.emissive.copy(coolDay).lerp(warmGlow, glow);
     glassCool.emissiveIntensity = THREE.MathUtils.lerp(0.08, 1.6, glow);
     lampMat.emissiveIntensity = glow * 2.6;
+    for (const shell of shells.values()) setWindowsGlow(shell, glow);
+    for (const group of dynamic.values()) setWindowsGlow(group, glow);
     gallerySpot.intensity = THREE.MathUtils.lerp(1.7, 3.1, glow);
     studioLamp.intensity = glow * 2.4;
     studioFill.intensity = THREE.MathUtils.lerp(0.85, 0.35, glow);
@@ -985,10 +935,64 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
       }
     },
     syncObjects,
-    syncCreations(items: CreationView[]) {
-      syncStudio(studioWork, studioDrafts(items));
-      const aim = syncGallery(galleryShows, galleryPicks(items));
-      gallerySpot.target.position.copy(aim);
+    syncCreations(items: CreationView[], notes: string[] = [], displays: { creationId: string; building: string; slot: string }[] = []) {
+      const taken = new Set(displays.map((row) => row.creationId));
+      const hosts: { name: string; shell: THREE.Object3D }[] = [];
+      for (const id of Object.keys(buildings) as BuildingId[]) {
+        const shell = shells.get(shellName[id]);
+        if (shell?.userData.spec) hosts.push({ name: shellName[id], shell });
+      }
+      for (const [id, group] of dynamic) {
+        if (!group.userData.spec) continue;
+        hosts.push({ name: typeof group.userData.blueprintName === "string" ? group.userData.blueprintName : id, shell: group });
+      }
+      for (const host of hosts) {
+        const spec = host.shell.userData.spec as BuildingBody;
+        const used = new Set(displays.filter((row) => row.building === host.name).map((row) => row.slot));
+        const auto = autoAssign(
+          spec,
+          host.name,
+          items.map((item) => ({
+            id: item.id,
+            type: item.type,
+            status: item.status,
+            favourite: item.favourite,
+            archived: item.archived,
+          })),
+          taken,
+          used,
+        );
+        const chosen = [...displays.filter((row) => row.building === host.name), ...auto];
+        const visuals: SlotVisual[] = chosen.map((row) => {
+          const item = items.find((entry) => entry.id === row.creationId);
+          return { slot: row.slot, label: item?.title ?? "Piece", colour: item?.type === "writing" ? "#f4efe4" : "#e7c27a", creationId: row.creationId };
+        });
+        if (host.name === "library") {
+          const book = spec.interior.find((slot) => slot.kind === "bookcase");
+          if (book && notes[0]) visuals.push({ slot: book.id, label: notes[0], colour: "#8d5a34" });
+        }
+        fillSlots(host.shell, visuals);
+      }
+    },
+    interiorView(id: string) {
+      const group = isBuildingId(id) ? buildings[id] : dynamic.get(id);
+      const shell = isBuildingId(id) ? shells.get(shellName[id]) : dynamic.get(id);
+      if (!group || !shell) return null;
+      const door = shell.userData.doorLocal instanceof THREE.Vector3 ? shell.userData.doorLocal : new THREE.Vector3(0, 0, 2);
+      const activity = shell.userData.activity instanceof THREE.Vector3 ? shell.userData.activity : new THREE.Vector3(0, 0, 0);
+      return {
+        position: group.localToWorld(new THREE.Vector3(door.x * 0.04 + 0.35, 1.55, door.z * 0.9)),
+        target: group.localToWorld(new THREE.Vector3(activity.x * 0.1, 0.65, -0.15)),
+      };
+    },
+    setEntered(id: string | null, amount: number) {
+      applyEntered(id, amount);
+    },
+    setOccupied(id: BuildingId | null, insideView: boolean) {
+      for (const buildingId of Object.keys(buildings) as BuildingId[]) {
+        const shell = shells.get(shellName[buildingId]);
+        if (shell) setOccupant(shell, id === buildingId && !insideView);
+      }
     },
     dressLabels(camera) {
       camera.getWorldPosition(labelCam);
@@ -1020,8 +1024,8 @@ export function createVillage(scene: THREE.Scene, quality: Quality): Village {
     frontView(id) {
       const group = buildings[id];
       return {
-        position: group.localToWorld(new THREE.Vector3(0.15, 3.4, 8.6)),
-        target: group.localToWorld(new THREE.Vector3(0, 1.05, 0.8)),
+        position: group.localToWorld(new THREE.Vector3(3.8, 2.7, 7.4)),
+        target: group.localToWorld(new THREE.Vector3(0, 1.2, 0)),
       };
     },
   };
@@ -1066,9 +1070,10 @@ function colors(hexes: string[]): THREE.Color[] {
 export function actionOf(object: THREE.Object3D | null): WorldAction | null {
   let current = object;
   while (current) {
+    if (typeof current.userData.creationId === "string") return { kind: "creation", id: current.userData.creationId };
+    if (typeof current.userData.enterId === "string") return { kind: "enter", id: current.userData.enterId };
     const action = current.userData.action;
     if (action === "diary" || action === "mailbox" || action === "studio" || action === "gallery") return action;
-    if (typeof current.userData.creationId === "string") return { kind: "creation", id: current.userData.creationId };
     current = current.parent;
   }
   return null;

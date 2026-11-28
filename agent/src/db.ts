@@ -294,6 +294,14 @@ function migrate(): void {
       arguments_parsed TEXT NOT NULL,
       error TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS displays (
+      creation_id TEXT PRIMARY KEY,
+      building TEXT NOT NULL,
+      slot TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (building, slot)
+    );
   `);
   ensureDiaryHidden();
   db.prepare(
@@ -1210,7 +1218,7 @@ function seedBlueprints(): void {
       const checked = validateBlueprint(item.spec);
       if ("error" in checked) throw new Error(checked.error);
       const spec = JSON.stringify(checked.spec);
-      if (item.name === "path_tile" || item.name === "studio" || item.name === "gallery") {
+      if (item.name === "path_tile" || item.name === "studio" || item.name === "gallery" || item.name === "home" || item.name === "library" || item.name === "mailbox") {
         refreshStarter.run(spec, item.name);
       }
       if (exists.get(item.name)) continue;
@@ -1453,6 +1461,23 @@ export function toolFailuresForDay(day: number): ToolCallRow[] {
     argumentsParsed: row.arguments_parsed,
     error: row.error,
   }));
+}
+
+export type DisplayRow = { creationId: string; building: string; slot: string };
+
+export function listDisplays(): DisplayRow[] {
+  const rows = db.prepare(`SELECT creation_id, building, slot FROM displays ORDER BY created_at`).all() as {
+    creation_id: string;
+    building: string;
+    slot: string;
+  }[];
+  return rows.map((row) => ({ creationId: row.creation_id, building: row.building, slot: row.slot }));
+}
+
+export function saveDisplay(creationId: string, building: string, slot: string): void {
+  db.prepare(
+    `INSERT INTO displays (creation_id, building, slot, created_at) VALUES (?, ?, ?, ?)`,
+  ).run(creationId, building, slot, new Date().toISOString());
 }
 
 export function latestToolRaw(tool: string): string {

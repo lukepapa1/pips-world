@@ -8,7 +8,7 @@ import {
   type RequestRow,
   type Season,
 } from "@pips/shared";
-import { blueprintMarkup, pendingBlueprintCount } from "./blueprintsPanel";
+import { blueprintMarkup, mountBuildingPreviews, pendingBlueprintCount } from "./blueprintsPanel";
 import { growthMarkup } from "./growthPanel";
 import { creationsMarkup, type CreationFilters } from "./creationsPanel";
 import { bindInboxSwipe, inboxCount, inboxMarkup } from "./inboxPanel";
@@ -747,6 +747,7 @@ export function createUI(
       if (nextBlueprints !== blueprintSig) {
         const top = blueprintsBody.scrollTop;
         blueprintsBody.innerHTML = blueprintMarkup(state);
+        mountBuildingPreviews(blueprintsBody, state);
         blueprintsBody.scrollTop = top;
         blueprintSig = nextBlueprints;
       }

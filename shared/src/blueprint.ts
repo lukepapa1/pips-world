@@ -1,3 +1,5 @@
+import { settleBuilding, type BuildingBody } from "./building.js";
+
 export const PRIMITIVES = ["box", "cylinder", "cone", "sphere"] as const;
 export const BEHAVIOURS = ["sway", "follow_path"] as const;
 
@@ -30,6 +32,7 @@ export type BlueprintSpec = {
   primitives: BlueprintPrimitive[];
   parameters?: Record<string, number>;
   behaviour?: BlueprintBehaviour;
+  building?: BuildingBody;
 };
 
 export type BlueprintStatus = "live" | "pending" | "archived";
@@ -54,7 +57,7 @@ const NAME = /^[a-z][a-z0-9_]{0,31}$/;
 const PARAM = /^[a-z][a-z0-9_]{0,20}$/;
 const COLOUR = /^#[0-9a-fA-F]{6}$/;
 const PRIMITIVE_KEYS = new Set(["shape", "size", "position", "rotation", "colour", "foliage", "emissive", "layer"]);
-const SPEC_KEYS = new Set(["primitives", "parameters", "behaviour"]);
+const SPEC_KEYS = new Set(["primitives", "parameters", "behaviour", "building", "kind"]);
 
 export function isBlueprintName(value: string): boolean {
   return NAME.test(value);
@@ -65,6 +68,18 @@ export function validateBlueprint(value: unknown): { spec: BlueprintSpec } | { e
     return { error: "A blueprint is a JSON object, not code." };
   }
   const spec = value as Record<string, unknown>;
+  if (spec.kind === "building" || spec.building) {
+    const source = spec.kind === "building" ? spec : spec.building;
+    const settled = settleBuilding(source);
+    const token: BlueprintPrimitive = {
+      shape: "box",
+      size: [0.04, 0.04, 0.04],
+      position: [0, 0.02, 0],
+      rotation: [0, 0, 0],
+      colour: settled.spec.wall.colour,
+    };
+    return { spec: { primitives: [token], building: settled.spec } };
+  }
   for (const key of Object.keys(spec)) {
     if (!SPEC_KEYS.has(key)) return { error: `Unknown field "${key}".` };
   }
@@ -212,6 +227,9 @@ export function resolveSpec(spec: BlueprintSpec, style = ""): BlueprintSpec {
 }
 
 export function footprintOfSpec(spec: BlueprintSpec): number {
+  if (spec.building) {
+    return Math.round((Math.max(spec.building.footprint.width, spec.building.footprint.depth) / 2) * 100) / 100;
+  }
   let reach = 0.35;
   for (const primitive of spec.primitives) {
     const radius = Math.hypot(primitive.position[0], primitive.position[2]) + Math.max(primitive.size[0], primitive.size[2]) / 2;

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { resolveSpec, type BlueprintSpec } from "@pips/shared";
+import { makeBuildingMesh } from "./buildingMesh";
 
 function geometryFor(shape: BlueprintSpec["primitives"][number]["shape"], size: [number, number, number]): THREE.BufferGeometry {
   if (shape === "box") return new THREE.BoxGeometry(size[0], size[1], size[2]);
@@ -20,7 +21,8 @@ function instanceScale(style: string): { scale: number; slot: number } {
   };
 }
 
-export function makeBlueprintMesh(spec: BlueprintSpec, style: string): THREE.Group {
+export function makeBlueprintMesh(spec: BlueprintSpec, style: string, options: { cutaway?: boolean } = {}): THREE.Group {
+  if (spec.building) return makeBuildingMesh(spec.building, options);
   const resolved = resolveSpec(spec, style);
   const { scale, slot } = instanceScale(style);
   const group = new THREE.Group();

@@ -113,6 +113,60 @@ test("build and design accept the shapes the model returned, plus the aliases", 
   assert.equal(overview.stats.toolErrors, 1);
   assert.equal(overview.stats.toolFailures.length, 1);
 
+  const designBuilding = tools.PIP_TOOLS.find((tool) => tool.name === "design_building");
+  const display = tools.PIP_TOOLS.find((tool) => tool.name === "display_creation");
+  assert.ok(designBuilding);
+  assert.ok(display);
+  const made = await run(
+    tools,
+    args,
+    designBuilding,
+    {
+      name: "reading_nook",
+      template: "cottage",
+      params: JSON.stringify({
+        size: 9,
+        wall_colour: "#c4a574",
+        roof_colour: "#6d4034",
+        roof_style: "gable",
+        window_count: 3,
+        door_side: "front",
+        chimney: true,
+      }),
+    },
+    flags,
+  );
+  assert.match(made.result, /reading_nook version 1 is live/);
+  const nook = db.liveBlueprint("reading_nook");
+  assert.ok(nook?.spec.building);
+  assert.ok(nook.spec.building.footprint.width <= 8);
+  assert.ok(nook.spec.building.footprint.depth <= 8);
+  const placedNook = await run(tools, args, build, { action: "add", type: "reading_nook", x: -6, z: 6 }, flags);
+  assert.match(placedNook.result, /reading nook/);
+
+  const { villageBuilding } = await import("@pips/shared");
+  const frame = villageBuilding("gallery").interior.find((slot) => slot.accepts.includes("art"));
+  assert.ok(frame);
+  const saved = await tools.executeTool(
+    "save_creation",
+    { type: "art", title: "Red square", files: { "sketch.svg": "<svg xmlns='http://www.w3.org/2000/svg'/>" } },
+    1,
+    flags,
+  );
+  const idMatch = saved.result.match(/Creation ([0-9a-f]{12})/);
+  assert.ok(idMatch, saved.result);
+  const creationId = idMatch[1] ?? "";
+  await tools.executeTool("finish_creation", { id: creationId }, 1, flags);
+  const shown = await run(tools, args, display, { creation_id: creationId, building: "gallery", slot: frame.id }, flags);
+  assert.match(shown.result, /Red square/);
+  const again = await tools.executeTool(
+    "display_creation",
+    { creation_id: creationId, building: "gallery", slot: frame.id },
+    1,
+    flags,
+  );
+  assert.match(again.result, /already on display/);
+
   const notice = loop.toolFixNotice();
   assert.equal(notice, "The build and design tools had a bug that has now been fixed. You can try them again.");
   assert.equal(loop.toolFixNotice(), "");

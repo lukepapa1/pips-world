@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  approachOf,
   footprintOf,
   footprintOfSpec,
   isBlueprintName,
+  rotationTowardOrigin,
   overlaps,
   type WorldEvent,
   type WorldObject,
@@ -91,8 +93,13 @@ export function runBuild(args: Record<string, unknown>, tick: number): ToolOutco
   const x = numberOf(args.x);
   const z = numberOf(args.z);
   if (x === null || z === null) return { result: "x and z must be numbers.", kind: null };
-  const rotation = args.rotation === undefined || args.rotation === null ? 0 : numberOf(args.rotation);
+  let rotation = args.rotation === undefined || args.rotation === null ? 0 : numberOf(args.rotation);
   if (rotation === null) return { result: "rotation must be a number.", kind: null };
+  const record = liveBlueprint(type);
+  if (record?.spec.building && action === "add") {
+    const approach = approachOf(record.spec.building, x, z, rotation);
+    if (!canBuildAt(approach.x, approach.z, 0.3)) rotation = rotationTowardOrigin(x, z);
+  }
   const style = styleOf(args.style);
   if (!buildsLeft()) {
     return { result: `The day's build limit is ${buildCap()}. Try again tomorrow.`, kind: null };

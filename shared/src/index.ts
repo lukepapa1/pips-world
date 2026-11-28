@@ -30,6 +30,21 @@ export {
   validateBlueprint,
 } from "./blueprint.js";
 export { STARTER_BLUEPRINTS } from "./catalogue.js";
+export type { BuildingBody, BuildingParams, BuildingSlot, BuildingTemplate, DoorSide, SlotKind } from "./building.js";
+export {
+  BUILDING_TEMPLATES,
+  MAX_SLOTS,
+  activitySlot,
+  approachOf,
+  autoAssign,
+  buildingBlueprint,
+  doorPad,
+  fromTemplate,
+  isBuildingTemplate,
+  rotationTowardOrigin,
+  settleBuilding,
+  villageBuilding,
+} from "./building.js";
 export type { GrowthPace, GrowthPlanView, GrowthSlot, GrowthView } from "./growth.js";
 export { GROWTH_PACES, isGrowthPace } from "./growth.js";
 export type {
@@ -365,6 +380,7 @@ export type SnapshotMessage = {
   growth: GrowthView;
   creations: CreationsLibrary;
   plots: PlotRecord[];
+  displays?: { creationId: string; building: string; slot: string }[];
 };
 
 export type ServerMessage =

@@ -27,6 +27,7 @@ import {
   listDigests,
   listEvents,
   listJournal,
+  listDisplays,
   listPlots,
   listRequests,
   listWorldObjects,
@@ -84,6 +85,7 @@ function snapshot(): SnapshotMessage {
     growth: growthView(),
     creations: libraryView(),
     plots: listPlots(),
+    displays: listDisplays(),
   };
 }
 

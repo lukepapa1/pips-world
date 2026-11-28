@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { MOUSE, TOUCH } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import type { BuildingId } from "@pips/shared";
+import { fromTemplate, type BuildingId } from "@pips/shared";
+import { makeBuildingMesh, setWindowsGlow } from "./buildingMesh";
 import type { ClientState } from "../state";
 import { pendingRequestCount, unreadDiaryCount } from "../state";
 import { createAtmosphere } from "./atmosphere";
@@ -205,6 +206,14 @@ export function mountScene(
     tracking = false;
     if (moved) return;
     const action = hitAction(event);
+    if (action && typeof action === "object" && action.kind === "enter") {
+      enterBuilding(action.id);
+      return;
+    }
+    if (entered && !action) {
+      leaveBuilding();
+      return;
+    }
     if (action) onAction(action);
   };
   const onContext = (event: Event) => event.preventDefault();
@@ -228,23 +237,81 @@ export function mountScene(
   const seenFinished = new Set<string>();
   let primedFinished = false;
 
+  const leaveButton = document.getElementById("leave-building");
+  let entered: string | null = null;
+  let enterAmount = 0;
+  const savedCam = new THREE.Vector3();
+  const savedTarget = new THREE.Vector3();
+  let savedMin = 3.5;
+  let savedMax = 28;
+  let doorFade = 0;
+  let doorWatch: BuildingId | null = null;
+  const glideCam = new THREE.Vector3();
+  const glideTarget = new THREE.Vector3();
+  let gliding = false;
+
+  function enterBuilding(id: string, snap = false): void {
+    const view = village.interiorView(id);
+    if (!view) return;
+    if (!entered) {
+      savedCam.copy(camera.position);
+      savedTarget.copy(controls.target);
+      savedMin = controls.minDistance;
+      savedMax = controls.maxDistance;
+    }
+    entered = id;
+    enterAmount = snap ? 1 : 0;
+    if (leaveButton) leaveButton.hidden = false;
+    controls.minDistance = 0.4;
+    controls.maxDistance = 6;
+    camera.fov = 62;
+    camera.updateProjectionMatrix();
+    glideCam.copy(view.position);
+    glideTarget.copy(view.target);
+    gliding = true;
+    if (snap || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      camera.position.copy(view.position);
+      controls.target.copy(view.target);
+      gliding = false;
+      controls.update();
+    }
+  }
+
+  function leaveBuilding(): void {
+    if (!entered) return;
+    entered = null;
+    enterAmount = 0;
+    if (leaveButton) leaveButton.hidden = true;
+    controls.minDistance = savedMin;
+    controls.maxDistance = savedMax;
+    camera.fov = 42;
+    camera.updateProjectionMatrix();
+    camera.position.copy(savedCam);
+    controls.target.copy(savedTarget);
+    village.setEntered(null, 0);
+    controls.update();
+  }
+
+  leaveButton?.addEventListener("click", () => leaveBuilding());
+
   function sendPip(id: BuildingId, jump: boolean): void {
     const spot = village.stands[id];
     if (!spot) return;
     if (jump) {
-      pip.placeAt(spot.stand, spot.door);
+      pip.placeAt(spot.inside, spot.door);
       lastPlace = id;
       goal = id;
       return;
     }
     if (goal === id) {
-      pip.walkTo(spot.stand, spot.door);
+      pip.walkTo(spot.inside, spot.door, [spot.stand]);
       return;
     }
     const stops = village.route(lastPlace, id);
-    pip.walkTo(spot.stand, spot.door, stops);
+    pip.walkTo(spot.inside, spot.door, [...stops, spot.stand]);
     lastPlace = id;
     goal = id;
+    doorWatch = id;
   }
 
   const loop = () => {
@@ -256,6 +323,31 @@ export function mountScene(
     village.setSeason(atmosphere.look.weights);
     seasonFx.update(elapsed, dt, atmosphere.look);
     village.update(elapsed);
+    if (entered) {
+      enterAmount = Math.min(1, enterAmount + dt * (window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 8 : 2.4));
+      village.setEntered(entered, enterAmount);
+      if (gliding) {
+        camera.position.lerp(glideCam, 0.14);
+        controls.target.lerp(glideTarget, 0.14);
+        if (camera.position.distanceTo(glideCam) < 0.08) gliding = false;
+      }
+    }
+    if (doorWatch && goal) {
+      const door = village.stands[goal]?.stand;
+      if (door && pip.group.position.distanceTo(door) < 0.7) {
+        doorWatch = null;
+        doorFade = 0.45;
+      }
+    }
+    if (doorFade > 0) {
+      doorFade = Math.max(0, doorFade - dt);
+      pip.group.visible = doorFade < 0.2;
+    } else if (!pip.group.visible) {
+      pip.group.visible = true;
+    }
+    const insideSpot = goal ? village.stands[goal]?.inside : null;
+    const arrived = Boolean(goal && insideSpot && pip.group.position.distanceTo(insideSpot) < 0.85);
+    village.setOccupied(arrived ? goal : null, entered === goal && arrived);
     village.dressLabels(camera);
     life.update(elapsed);
     const now = performance.now();
@@ -320,7 +412,64 @@ export function mountScene(
   }
 
   if (new URLSearchParams(location.search).has("shot")) {
-    const shot = { show: showShot };
+    const shot = {
+      show: showShot,
+      showBuilding(id: BuildingId, time: "dawn" | "noon" | "night", view: "out" | "in") {
+        showShot(id === "workshop" ? "studio" : id === "gallery" ? "gallery" : "village", time);
+        if (view === "out") {
+          leaveBuilding();
+          frameBuilding(id);
+          return;
+        }
+        enterBuilding(id, true);
+        village.setEntered(id, 1);
+      },
+      leave() {
+        leaveBuilding();
+      },
+      enter(id: BuildingId) {
+        enterBuilding(id, false);
+      },
+      occupy(id: BuildingId) {
+        sendPip(id, true);
+        village.setOccupied(id, false);
+      },
+      showDesigned(time: "dawn" | "noon" | "night", view: "out" | "in") {
+        showShot("village", time);
+        leaveBuilding();
+        let mesh = scene.getObjectByName("designed-barn");
+        if (!mesh) {
+          const made = fromTemplate("barn", { wall_colour: "#c4a574", roof_colour: "#6d4034", roof_style: "gable", window_count: 4, door_side: "front", chimney: true, size: 1 }, undefined, "Barn");
+          mesh = makeBuildingMesh(made.spec);
+          mesh.name = "designed-barn";
+          scene.add(mesh);
+        }
+        mesh.position.set(0, 0, 0);
+        mesh.rotation.y = 0.4;
+        mesh.updateMatrixWorld(true);
+        for (const id of ["home", "library", "workshop", "gallery", "mailbox"] as BuildingId[]) {
+          const host = scene.getObjectByName(id);
+          if (host) host.visible = false;
+        }
+        setWindowsGlow(mesh, time === "night" ? 1 : time === "dawn" ? 0.35 : 0);
+        if (view === "in") {
+          mesh.traverse((node) => {
+            if (node.name === "roof" || node.name === "front") node.visible = false;
+            if (node.name === "interior") node.visible = true;
+          });
+          camera.position.copy(mesh.localToWorld(new THREE.Vector3(0.4, 1.55, 2.6)));
+          controls.target.copy(mesh.localToWorld(new THREE.Vector3(0, 0.7, 0)));
+        } else {
+          mesh.traverse((node) => {
+            if (node.name === "roof" || node.name === "front") node.visible = true;
+            if (node.name === "interior") node.visible = false;
+          });
+          camera.position.copy(mesh.localToWorld(new THREE.Vector3(2.2, 2.5, 6.6)));
+          controls.target.copy(mesh.localToWorld(new THREE.Vector3(0, 1.2, 0)));
+        }
+        controls.update();
+      },
+    };
     Object.assign(window, { __pipShot: shot });
   }
 
@@ -348,7 +497,7 @@ export function mountScene(
       pip.setPaused(state.paused);
       village.setBrowsing(state.browsing !== null);
       village.syncObjects(state.objects, state.blueprints, state.paths);
-      village.syncCreations(state.creations?.items ?? []);
+      village.syncCreations(state.creations?.items ?? [], state.growth?.topicsThisWeek ?? [], state.displays);
       plots.sync(state.plots);
       if (state.world) atmosphere.setWorld(state.world);
       if (!primedFinished) {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { BUILDING_NAMES, isBuildingId, type BrowseTool, type WorldEvent } from "@pips/shared";
-import { lastMoveTarget, latestToolRaw, listRequests, makeEvent, recallWithin, recentDiary, rememberIdentity, rememberRecall, saveEvents } from "./db.js";
+import { BUILDING_NAMES, fromTemplate, isBuildingId, isBuildingTemplate, settleBuilding, villageBuilding, type BrowseTool, type BuildingBody, type WorldEvent } from "@pips/shared";
+import { lastMoveTarget, latestToolRaw, listDisplays, listRequests, liveBlueprint, makeEvent, recallWithin, recentDiary, rememberIdentity, rememberRecall, saveDisplay, saveEvents } from "./db.js";
 import { nearDuplicate, noteDuplicate } from "./duplicates.js";
 import { broadcast } from "./hub.js";
 import type { LookImage, ToolSpec } from "./llm.js";
@@ -11,7 +11,7 @@ import { domainOf, formatSearch, openableUrl, readPage, viewImage, webContent, w
 import { runBuild } from "./build.js";
 import { designBlueprint, layPath, previewBlueprint } from "./blueprints.js";
 import { continueStudy, endStudy, saveNote, searchNotes, startStudy } from "./growth.js";
-import { finishCreation, listCreations, openCreation, saveCreation } from "./creations.js";
+import { finishCreation, libraryView, listCreations, openCreation, saveCreation } from "./creations.js";
 import { explorePlot, proposeExpansion } from "./plots.js";
 import { explainToolError } from "./toolArgs.js";
 
@@ -363,6 +363,47 @@ export const PIP_TOOLS: ToolSpec[] = [
     required: ["title", "detail"],
   },
   {
+    name: "design_building",
+    description:
+      'Design a building from a template, then place it with build. template is cottage, workshop, barn, tower, pavilion, or stall. Example: design_building(name="reading_nook", template="cottage", params={"wall_colour":"#f3efe6","roof_colour":"#8d4a3a","roof_style":"gable","window_count":4,"door_side":"front","chimney":true,"size":1}).',
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Blueprint name, lowercase letters and underscores." },
+        template: {
+          type: "string",
+          enum: ["cottage", "workshop", "barn", "tower", "pavilion", "stall"],
+          description: "Which template to start from.",
+        },
+        params: {
+          type: "object",
+          description: "size, wall_colour, roof_colour, roof_style (gable, hip, shed, flat), window_count, door_side (front, back, left, right), chimney, interior.",
+        },
+        interior_overrides: {
+          type: "array",
+          description: "Optional slots instead of the preset. Each has kind, position, size, and accepts.",
+        },
+      },
+      required: ["name", "template"],
+    },
+    required: ["name", "template"],
+  },
+  {
+    name: "display_creation",
+    description:
+      'Put a finished creation in a building slot. Rejects a second copy of the same piece. Example: display_creation(creation_id="creation-id", building="gallery", slot="frame-1").',
+    parameters: {
+      type: "object",
+      properties: {
+        creation_id: { type: "string", description: "Creation id." },
+        building: { type: "string", description: "home, library, workshop, gallery, mailbox, or a building blueprint name." },
+        slot: { type: "string", description: "Slot id inside that building." },
+      },
+      required: ["creation_id", "building", "slot"],
+    },
+    required: ["creation_id", "building", "slot"],
+  },
+  {
     name: "report_problem",
     description:
       'Tell the owner that a tool failed after you tried the corrected example twice. Then do something else. Example: report_problem(tool="build", what_happened="build failed twice after the example call.").',
@@ -393,6 +434,73 @@ export type ToolOutcome = {
   kind: string | null;
   image?: LookImage;
 };
+
+function buildingNamed(name: string): BuildingBody | null {
+  if (name === "studio" || name === "workshop") return villageBuilding("workshop");
+  if (name === "home") return villageBuilding("home");
+  if (name === "library") return villageBuilding("library");
+  if (name === "gallery") return villageBuilding("gallery");
+  if (name === "mailbox") return villageBuilding("mailbox");
+  return liveBlueprint(name)?.spec.building ?? null;
+}
+
+function designBuilding(args: Record<string, unknown>, tick: number): ToolOutcome {
+  const name = typeof args.name === "string" ? args.name.trim() : "";
+  if (!isBuildingTemplate(args.template)) {
+    return { result: explainToolError("design_building", args, "template must be cottage, workshop, barn, tower, pavilion, or stall."), kind: null };
+  }
+  const params = args.params && typeof args.params === "object" ? (args.params as Record<string, unknown>) : {};
+  const made = fromTemplate(
+    args.template,
+    {
+      size: typeof params.size === "number" ? params.size : undefined,
+      wall_colour: typeof params.wall_colour === "string" ? params.wall_colour : undefined,
+      roof_colour: typeof params.roof_colour === "string" ? params.roof_colour : undefined,
+      roof_style: params.roof_style === "gable" || params.roof_style === "hip" || params.roof_style === "shed" || params.roof_style === "flat" ? params.roof_style : undefined,
+      window_count: typeof params.window_count === "number" ? params.window_count : undefined,
+      door_side: params.door_side === "front" || params.door_side === "back" || params.door_side === "left" || params.door_side === "right" ? params.door_side : undefined,
+      chimney: typeof params.chimney === "boolean" ? params.chimney : undefined,
+      interior: typeof params.interior === "string" ? params.interior : undefined,
+    },
+    args.interior_overrides,
+    name.replaceAll("_", " "),
+  );
+  const settled = settleBuilding(made.spec, made.notes);
+  const outcome = designBlueprint(name, settled.spec, tick, settled.notes.join(" "));
+  return withExample("design_building", args, outcome);
+}
+
+function displayCreation(args: Record<string, unknown>, tick: number): ToolOutcome {
+  const creationId = typeof args.creation_id === "string" ? args.creation_id.trim() : "";
+  const building = typeof args.building === "string" ? args.building.trim() : "";
+  const slot = typeof args.slot === "string" ? args.slot.trim() : "";
+  const canonical = building === "workshop" ? "studio" : building;
+  const item = libraryView().items.find((entry) => entry.id === creationId);
+  if (!item || item.archived) return { result: explainToolError("display_creation", args, "That creation is not in the library."), kind: null };
+  const spec = buildingNamed(canonical);
+  if (!spec) return { result: explainToolError("display_creation", args, "That building does not exist."), kind: null };
+  const found = spec.interior.find((entry) => entry.id === slot);
+  if (!found) return { result: explainToolError("display_creation", args, "That slot is not in the building."), kind: null };
+  if (!found.accepts.includes(item.type)) {
+    return { result: explainToolError("display_creation", args, `${found.kind} accepts ${found.accepts.join(", ")}.`), kind: null };
+  }
+  const rows = listDisplays();
+  if (rows.some((row) => row.creationId === creationId)) {
+    return { result: explainToolError("display_creation", args, "That creation is already on display."), kind: null };
+  }
+  if (rows.some((row) => row.building === canonical && row.slot === slot)) {
+    return { result: explainToolError("display_creation", args, "That slot is already taken."), kind: null };
+  }
+  saveDisplay(creationId, canonical, slot);
+  saveEvents([
+    makeEvent(
+      "creation_updated",
+      { creationId, type: item.type, title: item.title, version: item.versions.at(-1)?.version ?? 1 },
+      tick,
+    ),
+  ]);
+  return { result: `Placed “${item.title}” in ${canonical} ${slot}.`, kind: "creation_updated" };
+}
 
 function withExample(name: string, args: Record<string, unknown>, outcome: ToolOutcome): ToolOutcome {
   if (outcome.kind) return outcome;
@@ -461,6 +569,10 @@ export async function executeTool(
       return updateFile("interests.md", args);
     case "build":
       return withExample("build", args, runBuild(args, tick));
+    case "design_building":
+      return designBuilding(args, tick);
+    case "display_creation":
+      return displayCreation(args, tick);
     case "design_blueprint":
       return withExample(
         "design_blueprint",

@@ -268,6 +268,13 @@ function makingTab(state: ClientState, data: OverviewData | null, ui: OverviewUi
   </section>`;
 }
 
+function slotUsage(spec: BlueprintRecord["spec"]): string {
+  const body = spec.building;
+  if (!body) return "";
+  const kinds = body.interior.map((slot) => slot.kind).join(", ");
+  return ` · ${body.interior.length} slots (${kinds})`;
+}
+
 function blueprintTab(state: ClientState, data: OverviewData | null, ui: OverviewUi): string {
   const groups = grouped(state.blueprints);
   const start = ui.page * BLUEPRINT_PAGE;
@@ -280,7 +287,7 @@ function blueprintTab(state: ClientState, data: OverviewData | null, ui: Overvie
       return `<button type="button" class="bp-card" data-blueprint="${esc(group.name)}">
         <canvas data-blueprint-preview="${esc(group.name)}" data-version="${current.version}" width="160" height="120"></canvas>
         <strong>${esc(group.name)}</strong>
-        <span>v${current.version} ${esc(current.status)} · ${usersOf(state, group.name)} in the village</span>
+        <span>v${current.version} ${esc(current.status)} · ${usersOf(state, group.name)} in the village${slotUsage(current.spec)}</span>
       </button>`;
     })
     .join("");
@@ -302,6 +309,7 @@ function blueprintTab(state: ClientState, data: OverviewData | null, ui: Overvie
       .join("");
     detail = `<article class="overview-detail">
       <h3>${esc(selected.name)}</h3>
+      ${current?.spec.building ? `<p>${esc(slotUsage(current.spec).replace(/^ · /, ""))}</p>` : ""}
       ${
         oldest && current
           ? `<canvas data-compare-canvas data-blueprint-preview="${esc(selected.name)}" data-before="${oldest.version}" data-after="${current.version}" width="320" height="200"></canvas>
@@ -417,12 +425,12 @@ function startPreview(canvas: HTMLCanvasElement, state: ClientState): (() => voi
     const beforeSpec = specOf(state, name, beforeVersion);
     const afterSpec = specOf(state, name, afterVersion);
     if (beforeSpec) {
-      const before = makeBlueprintMesh(beforeSpec.spec, "");
+      const before = makeBlueprintMesh(beforeSpec.spec, "", { cutaway: Boolean(beforeSpec.spec.building) });
       scene.add(before);
       groups.push(before);
     }
     if (afterSpec) {
-      const after = makeBlueprintMesh(afterSpec.spec, "");
+      const after = makeBlueprintMesh(afterSpec.spec, "", { cutaway: Boolean(afterSpec.spec.building) });
       scene.add(after);
       groups.push(after);
     }
@@ -433,7 +441,7 @@ function startPreview(canvas: HTMLCanvasElement, state: ClientState): (() => voi
       renderer.dispose();
       return null;
     }
-    const mesh = makeBlueprintMesh(record.spec, "");
+    const mesh = makeBlueprintMesh(record.spec, "", { cutaway: Boolean(record.spec.building) });
     scene.add(mesh);
     groups.push(mesh);
   }
@@ -507,7 +515,7 @@ function mountGrid(canvases: HTMLCanvasElement[], state: ClientState): void {
     if (!record) return [];
     const context = canvas.getContext("2d");
     if (!context) return [];
-    return [{ canvas, context, mesh: makeBlueprintMesh(record.spec, "") }];
+    return [{ canvas, context, mesh: makeBlueprintMesh(record.spec, "", { cutaway: Boolean(record.spec.building) }) }];
   });
   let frameId = 0;
   const draw = () => {
