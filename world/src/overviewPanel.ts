@@ -38,6 +38,8 @@ export type OverviewData = {
     creations: number;
     pagesRead: number;
     activity: { day: number; count: number }[];
+    toolErrors: number;
+    toolFailures: { tool: string; error: string }[];
     private: { calls: number; callCap: number; tokensToday: number; spendUsd: number } | null;
   };
 };
@@ -329,6 +331,7 @@ function statsTab(data: OverviewData | null, error: string): string {
     ["Builds", String(stats.builds)],
     ["Creations", String(stats.creations)],
     ["Pages read", String(stats.pagesRead)],
+    ["Tool errors", String(stats.toolErrors ?? 0)],
   ];
   if (stats.private) {
     cells.push(["Model calls today", `${stats.private.calls} / ${stats.private.callCap}`]);
@@ -341,9 +344,14 @@ function statsTab(data: OverviewData | null, error: string): string {
         `<span title="Day ${day.day}: ${day.count}"><i style="height:${Math.max(4, Math.round((day.count / max) * 100))}%"></i><em>${day.day}</em></span>`,
     )
     .join("");
+  const failures = (stats.toolFailures ?? [])
+    .map((row) => `<li><strong>${esc(row.tool)}</strong> ${esc(row.error)}</li>`)
+    .join("");
   return `<section>
     <div class="stat-grid">${cells.map(([label, value]) => `<article><span>${esc(label ?? "")}</span><strong>${esc(value ?? "")}</strong></article>`).join("")}</div>
     ${stats.private ? `<p class="muted">Spend is an estimate from today’s ${stats.private.tokensToday.toLocaleString("en-AU")} tokens. Older days are not stored.</p>` : ""}
+    <h3>Tool problems</h3>
+    ${failures ? `<ul class="tool-failures">${failures}</ul>` : `<p class="empty">No tool problems.</p>`}
     <h3>Activity per day</h3>
     <div class="bars">${bars || `<p class="empty">No events yet.</p>`}</div>
   </section>`;

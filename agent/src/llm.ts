@@ -6,6 +6,7 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import { webContent } from "./web.js";
+import { acceptToolCall } from "./toolArgs.js";
 
 export class RateLimitError extends Error {
   constructor(message = "Rate limit persisted.") {
@@ -60,12 +61,15 @@ export type ToolCall = {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  raw: string;
 };
 
 export type RejectedCall = {
   id: string;
   name: string;
   reason: string;
+  raw: string;
+  args: Record<string, unknown>;
 };
 
 export type Turn = {
@@ -129,35 +133,6 @@ function backoffMs(attempt: number, error: unknown): number {
   return Math.min(1000 * 2 ** attempt, 20_000);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function parseArguments(raw: unknown): { args: Record<string, unknown> } | { reason: string } {
-  if (typeof raw === "string") {
-    if (!raw.trim()) return { args: {} };
-    try {
-      const parsed = asRecord(JSON.parse(raw));
-      if (!parsed) return { reason: "arguments were not an object" };
-      return { args: parsed };
-    } catch {
-      return { reason: "arguments were not JSON" };
-    }
-  }
-  const parsed = asRecord(raw);
-  if (!parsed) return { reason: "arguments were not an object" };
-  return { args: parsed };
-}
-
-function requiredOk(args: Record<string, unknown>, required: string[]): string | null {
-  for (const key of required) {
-    const value = args[key];
-    if (typeof value !== "string" || value.trim() === "") return `${key} is missing`;
-  }
-  return null;
-}
-
 function apiTools(specs: ToolSpec[]): ChatCompletionTool[] {
   return specs.map((spec) => ({
     type: "function",
@@ -186,21 +161,18 @@ function parseTurn(message: ChatCompletionMessage | undefined, specs: ToolSpec[]
     const id = raw.id;
     const name = raw.function?.name?.trim() || "unknown";
     const spec = known.get(name);
+    const incoming = raw.function?.arguments ?? "";
     if (!spec) {
-      rejected.push({ id, name, reason: "unknown tool" });
+      const rawText = typeof incoming === "string" ? incoming : JSON.stringify(incoming);
+      rejected.push({ id, name, reason: `Unknown tool ${name}.`, raw: rawText, args: {} });
       return;
     }
-    const parsed = parseArguments(raw.function?.arguments);
-    if ("reason" in parsed) {
-      rejected.push({ id, name, reason: parsed.reason });
+    const accepted = acceptToolCall(spec, incoming);
+    if ("error" in accepted) {
+      rejected.push({ id, name, reason: accepted.error, raw: accepted.rawText, args: accepted.args });
       return;
     }
-    const missing = requiredOk(parsed.args, spec.required);
-    if (missing) {
-      rejected.push({ id, name, reason: missing });
-      return;
-    }
-    calls.push({ id, name, args: parsed.args });
+    calls.push({ id, name, args: accepted.args, raw: accepted.rawText });
   });
 
   return { text: message?.content ?? null, calls, rejected };
@@ -354,28 +326,8 @@ export class Chat {
 
   async turn(specs: ToolSpec[], meter: Meter, force?: string, maxTokens = 1200): Promise<Turn> {
     const first = await request(this.messages, specs, meter, this.model, force, maxTokens);
-    if (first.turn.rejected.length === 0) {
-      this.pushAssistant(first.message);
-      return first.turn;
-    }
-
-    console.warn("Malformed tool call, retrying once.");
-    try {
-      const second = await request(this.messages, specs, meter, this.model, force, maxTokens);
-      this.pushAssistant(second.message);
-      for (const bad of second.turn.rejected) {
-        console.warn(`Malformed tool call ignored: ${bad.name} (${bad.reason}).`);
-      }
-      return second.turn;
-    } catch (error) {
-      if (!(error instanceof CapError)) throw error;
-      console.warn("Malformed tool call ignored: retry blocked by the daily cap.");
-      this.pushAssistant(first.message);
-      for (const bad of first.turn.rejected) {
-        console.warn(`Malformed tool call ignored: ${bad.name} (${bad.reason}).`);
-      }
-      return first.turn;
-    }
+    this.pushAssistant(first.message);
+    return first.turn;
   }
 
   private pushAssistant(message: ChatCompletionMessage | undefined): void {
@@ -386,4 +338,38 @@ export class Chat {
     }
     this.messages.push(message as ChatCompletionMessageParam);
   }
+}
+
+export type RawCapturedCall = {
+  name: string;
+  argumentsType: string;
+  argumentsRaw: unknown;
+};
+
+/** One model turn, returning tool arguments exactly as the API sent them. */
+export async function captureRawToolCalls(
+  user: string,
+  specs: ToolSpec[],
+  force?: string,
+): Promise<{ model: string; content: string | null; calls: RawCapturedCall[] }> {
+  const openaiClient = openai();
+  const model = tickModel();
+  const response = await openaiClient.chat.completions.create({
+    model,
+    messages: [{ role: "user", content: user }],
+    tools: apiTools(specs),
+    tool_choice: force ? { type: "function", function: { name: force } } : "auto",
+    max_tokens: 1200,
+  });
+  const message = response.choices[0]?.message;
+  const rawCalls = (message?.tool_calls ?? []) as RawToolCall[];
+  return {
+    model,
+    content: typeof message?.content === "string" ? message.content : null,
+    calls: rawCalls.map((raw) => ({
+      name: raw.function?.name?.trim() || "unknown",
+      argumentsType: raw.function?.arguments === null ? "null" : typeof raw.function?.arguments,
+      argumentsRaw: raw.function?.arguments ?? null,
+    })),
+  };
 }

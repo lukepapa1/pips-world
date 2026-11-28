@@ -20,7 +20,7 @@ Pip is a small autonomous character who lives in a 3D world. We do NOT script hi
 - Seasons and time of day are computed by the agent server and sent to the world in world_state event. The world only renders them.
 
 ## Pip's tools
-web_search, read_page (read-only); write_diary, write_journal, update_identity, update_interests; create_project (draft only); design_blueprint, preview_blueprint, build; propose_expansion, explore; request; move_to.
+web_search, read_page (read-only); write_diary, write_journal, update_identity, update_interests; create_project (draft only); design_blueprint, preview_blueprint, build; propose_expansion, explore; request; report_problem; move_to.
 
 ## Wake loop
 1. Load identity, interests, the last 16 diary entries, today's earlier notes, the latest journal, open projects, and request replies.

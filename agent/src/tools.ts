@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { BUILDING_NAMES, isBuildingId, type BrowseTool, type WorldEvent } from "@pips/shared";
-import { lastMoveTarget, listRequests, makeEvent, recallWithin, recentDiary, rememberIdentity, rememberRecall, saveEvents } from "./db.js";
+import { lastMoveTarget, latestToolRaw, listRequests, makeEvent, recallWithin, recentDiary, rememberIdentity, rememberRecall, saveEvents } from "./db.js";
 import { nearDuplicate, noteDuplicate } from "./duplicates.js";
 import { broadcast } from "./hub.js";
 import type { LookImage, ToolSpec } from "./llm.js";
@@ -13,6 +13,7 @@ import { designBlueprint, layPath, previewBlueprint } from "./blueprints.js";
 import { continueStudy, endStudy, saveNote, searchNotes, startStudy } from "./growth.js";
 import { finishCreation, listCreations, openCreation, saveCreation } from "./creations.js";
 import { explorePlot, proposeExpansion } from "./plots.js";
+import { explainToolError } from "./toolArgs.js";
 
 const TEXT_MAX = 4000;
 const FILE_MAX = 12_000;
@@ -56,51 +57,51 @@ const URL_SCHEMA = {
 export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "move_to",
-    description: "Walk to a place in the village: home, library, workshop, gallery, or mailbox.",
+    description: "Walk to a place in the village: home, library, workshop, gallery, or mailbox. Example: move_to(place=\"home\").",
     parameters: PLACE_SCHEMA,
     required: ["place"],
   },
   {
     name: "web_search",
-    description: "Search the public web. Returns the top 5 results with title, url, and snippet.",
+    description: "Search the public web. Returns the top 5 results with title, url, and snippet. Example: web_search(query=\"paper boats\").",
     parameters: QUERY_SCHEMA,
     required: ["query"],
   },
   {
     name: "read_page",
-    description: "Read the text of a public http or https page. Read-only: no logins, forms, or changes.",
+    description: "Read the text of a public http or https page. Read-only: no logins, forms, or changes. Example: read_page(url=\"https://example.com\").",
     parameters: URL_SCHEMA,
     required: ["url"],
   },
   {
     name: "view_image",
-    description: "Look at a public jpeg, png, or webp image.",
+    description: "Look at a public jpeg, png, or webp image. Example: view_image(url=\"https://example.com/sketch.png\").",
     parameters: URL_SCHEMA,
     required: ["url"],
   },
   {
     name: "write_diary",
     description:
-      "Save the diary entry for this tick, about what you did and noticed since your last entry. Call this at the end of every tick.",
+      "Save the diary entry for this tick, about what you did and noticed since your last entry. Call this at the end of every tick. Example: write_diary(text=\"I placed a garden bed near the path.\").",
     parameters: TEXT_SCHEMA,
     required: ["text"],
   },
   {
     name: "write_journal",
-    description: "Save a journal entry. Used at the end of a day to reflect on that day's diary.",
+    description: "Save a journal entry. Used at the end of a day to reflect on that day's diary. Example: write_journal(text=\"Today I kept one small change.\").",
     parameters: TEXT_SCHEMA,
     required: ["text"],
   },
   {
     name: "update_identity",
-    description: "Replace identity.md with the full text you want to keep. You write this file yourself.",
+    description: "Replace identity.md with the full text you want to keep. You write this file yourself. Example: update_identity(text=\"I keep a short note of who I am.\").",
     parameters: TEXT_SCHEMA,
     required: ["text"],
   },
   {
     name: "update_interests",
     description:
-      "Replace interests.md with the full text you want to keep. You write this file yourself. Or pass items, a list of {name, summary, strength, first_seen, last_active, evidence}, and the file is rewritten from that list.",
+      "Replace interests.md with the full text you want to keep. You write this file yourself. Or pass items, a list of {name, summary, strength, first_seen, last_active, evidence}, and the file is rewritten from that list. Example: update_interests(text=\"Paper boats.\").",
     parameters: {
       type: "object",
       properties: {
@@ -118,16 +119,13 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "design_blueprint",
     description:
-      "Create or publish a new version of a blueprint. name is lowercase. spec is JSON data: primitives (box, cylinder, cone, sphere) with size, position, rotation and colour, plus optional numeric parameters and an optional behaviour of sway or follow_path. No code.",
+      'Create or publish a new version of a blueprint. name is lowercase. spec is a JSON object of primitives, or pass the same JSON as spec_json. Example: design_blueprint(name="stone_seat", spec={"primitives":[{"shape":"box","size":[1,0.4,0.5],"position":[0,0.2,0],"rotation":[0,0,0],"colour":"#8d8680"}]}).',
     parameters: {
       type: "object",
       properties: {
         name: { type: "string", description: "Blueprint name, lowercase letters and underscores." },
-        spec: {
-          type: "object",
-          description: "JSON blueprint. Primitives only.",
-          additionalProperties: true,
-        },
+        spec: { type: "object", description: "JSON blueprint. Primitives only: shape, size, position, rotation, colour." },
+        spec_json: { type: "string", description: "The same spec as a JSON string, if you are not sending spec as an object." },
         why: { type: "string", description: "Optional sentence on what you changed." },
       },
       required: ["name", "spec"],
@@ -137,7 +135,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "preview_blueprint",
     description:
-      "Draw the latest version of a blueprint and show you the picture, so you can critique it and revise. At most 4 previews of one blueprint per day.",
+      "Draw the latest version of a blueprint and show you the picture, so you can critique it and revise. At most 4 previews of one blueprint per day. Example: preview_blueprint(name=\"stone_seat\").",
     parameters: {
       type: "object",
       properties: {
@@ -150,7 +148,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "lay_path",
     description:
-      "Store a path as a list of { x, z } points inside the village. Optional object_id attaches it to something you placed, for a blueprint whose behaviour is follow_path.",
+      "Store a path as a list of { x, z } points inside the village. Optional object_id attaches it to something you placed, for a blueprint whose behaviour is follow_path. Example: lay_path(name=\"gate_walk\", points=[{\"x\":0,\"z\":0},{\"x\":2,\"z\":1}]).",
     parameters: {
       type: "object",
       properties: {
@@ -176,7 +174,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "build",
     description:
-      "Add, move, or remove something you placed in the village. type is a live blueprint name, such as bench, garden_bed, shelf, lamp, tree, flower_patch, fence, or path_tile, or one you designed. x and z are metres from the centre. rotation is radians. Pass id when moving or removing one of several. You cannot move or remove the houses or the trees that were already here.",
+      'Add, move, or remove something you placed in the village. type is a live blueprint name, such as bench, garden_bed, shelf, lamp, tree, flower_patch, fence, or path_tile, or one you designed. x and z are plain numbers, metres from the centre. rotation is radians. Pass id when moving or removing one of several. You cannot move or remove the houses or the trees that were already here. Example: build(action="add", type="garden_bed", x=1, z=1).',
     parameters: {
       type: "object",
       properties: {
@@ -198,7 +196,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "start_study",
     description:
-      "Open a study on a topic you choose. Say why it matters to you and how many ticks you plan, from 1 to 12. At most two studies can be open.",
+      "Open a study on a topic you choose. Say why it matters to you and how many ticks you plan, from 1 to 12. At most two studies can be open. Example: start_study(topic=\"paper boats\", why=\"I want to see how they float.\", planned_ticks=4).",
     parameters: {
       type: "object",
       properties: {
@@ -215,7 +213,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "continue_study",
-    description: "Add what you learned to an open study. Pass its id and your notes.",
+    description: "Add what you learned to an open study. Pass its id and your notes. Example: continue_study(id=\"study-id\", notes=\"A wide base stays up.\").",
     parameters: {
       type: "object",
       properties: {
@@ -228,7 +226,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "end_study",
-    description: "Close an open study with a short summary of what you keep from it.",
+    description: "Close an open study with a short summary of what you keep from it. Example: end_study(id=\"study-id\", summary=\"A wide base stays up.\").",
     parameters: {
       type: "object",
       properties: {
@@ -241,7 +239,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "save_note",
-    description: "Save a knowledge note on a topic, with the text and any sources you actually used.",
+    description: "Save a knowledge note on a topic, with the text and any sources you actually used. Example: save_note(topic=\"paper boats\", text=\"A wide base stays up.\").",
     parameters: {
       type: "object",
       properties: {
@@ -255,7 +253,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "search_notes",
-    description: "Search notes you have saved. Pass a topic or a few words.",
+    description: "Search notes you have saved. Pass a topic or a few words. Example: search_notes(topic=\"paper boats\").",
     parameters: {
       type: "object",
       properties: {
@@ -268,7 +266,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "save_creation",
     description:
-      "Start a creation, or save a new version of an open draft with the same type and title. You choose the subject. Files are an object of file name to text (png may be a base64 data URL).",
+      "Start a creation, or save a new version of an open draft with the same type and title. You choose the subject. Files are an object of file name to text (png may be a base64 data URL). Example: save_creation(type=\"writing\", title=\"Boat note\", files={\"note.md\":\"A wide base stays up.\"}).",
     parameters: {
       type: "object",
       properties: {
@@ -281,7 +279,6 @@ export const PIP_TOOLS: ToolSpec[] = [
         files: {
           type: "object",
           description: "File name to contents. Art is png or svg. Writing is markdown. Design and mechanic are json. A game or site is static files.",
-          additionalProperties: { type: "string" },
         },
         notes: { type: "string", description: "Why you made it, and what you learned." },
         inspired_by: { type: "string", description: "What you were looking at, if anything. Optional." },
@@ -292,7 +289,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "list_creations",
-    description: "List creations. Filter by a type, a status, a season, starred, or archived. Leave the filter empty to see what is not archived.",
+    description: "List creations. Filter by a type, a status, a season, starred, or archived. Leave the filter empty to see what is not archived. Example: list_creations(filter=\"writing\").",
     parameters: {
       type: "object",
       properties: {
@@ -303,7 +300,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "open_creation",
-    description: "Read one creation: notes, versions, and the text of its files.",
+    description: "Read one creation: notes, versions, and the text of its files. Example: open_creation(id=\"creation-id\").",
     parameters: {
       type: "object",
       properties: {
@@ -315,7 +312,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "finish_creation",
-    description: "Mark a draft finished so it can be shown in the gallery. You do not publish it.",
+    description: "Mark a draft finished so it can be shown in the gallery. You do not publish it. Example: finish_creation(id=\"creation-id\").",
     parameters: {
       type: "object",
       properties: {
@@ -328,7 +325,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "propose_expansion",
     description:
-      "Ask the owner to open a plot that shares a side with land already open. Ask rarely, and always give your own reason. plot is the grid of a mist edge. A request already filed for that plot is returned instead.",
+      "Ask the owner to open a plot that shares a side with land already open. Ask rarely, and always give your own reason. plot is the grid of a mist edge. A request already filed for that plot is returned instead. Example: propose_expansion(plot=\"1,1\", reason=\"The rocks are the next edge I can see.\").",
     parameters: {
       type: "object",
       properties: {
@@ -341,7 +338,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   },
   {
     name: "explore",
-    description: "Walk to the near edge of a plot the owner has already opened. plot is its grid.",
+    description: "Walk to the near edge of a plot the owner has already opened. plot is its grid. Example: explore(plot=\"0,0\").",
     parameters: {
       type: "object",
       properties: {
@@ -354,7 +351,7 @@ export const PIP_TOOLS: ToolSpec[] = [
   {
     name: "propose_mechanic",
     description:
-      "Ask the owner to approve a mechanic. Say what it is. A near-duplicate of one already filed is returned instead.",
+      "Ask the owner to approve a mechanic. Say what it is. A near-duplicate of one already filed is returned instead. Example: propose_mechanic(title=\"A small bell\", detail=\"A bell by the gate.\").",
     parameters: {
       type: "object",
       properties: {
@@ -364,6 +361,20 @@ export const PIP_TOOLS: ToolSpec[] = [
       required: ["title", "detail"],
     },
     required: ["title", "detail"],
+  },
+  {
+    name: "report_problem",
+    description:
+      'Tell the owner that a tool failed after you tried the corrected example twice. Then do something else. Example: report_problem(tool="build", what_happened="build failed twice after the example call.").',
+    parameters: {
+      type: "object",
+      properties: {
+        tool: { type: "string", description: "The tool that failed." },
+        what_happened: { type: "string", description: "What the tool returned." },
+      },
+      required: ["tool", "what_happened"],
+    },
+    required: ["tool", "what_happened"],
   },
 ];
 
@@ -382,6 +393,31 @@ export type ToolOutcome = {
   kind: string | null;
   image?: LookImage;
 };
+
+function withExample(name: string, args: Record<string, unknown>, outcome: ToolOutcome): ToolOutcome {
+  if (outcome.kind) return outcome;
+  if (outcome.result.includes("Example:")) return outcome;
+  return { ...outcome, result: explainToolError(name, args, outcome.result) };
+}
+
+function reportProblem(args: Record<string, unknown>, tick: number): ToolOutcome {
+  const tool = typeof args.tool === "string" ? args.tool.trim() : "";
+  const what = typeof args.what_happened === "string" ? args.what_happened.trim() : "";
+  if (!tool) return { result: explainToolError("report_problem", args, "tool is missing."), kind: null };
+  if (!what) return { result: explainToolError("report_problem", args, "what_happened is missing."), kind: null };
+  const raw = latestToolRaw(tool);
+  const body = [what.slice(0, 800), raw ? `Logged call: ${raw}` : "No logged call for that tool."]
+    .join("\n\n")
+    .slice(0, 2000);
+  publish(
+    makeEvent<Extract<WorldEvent, { kind: "request" }>>(
+      "request",
+      { requestId: randomUUID(), title: `Tool problem: ${tool}`.slice(0, 120), body },
+      tick,
+    ),
+  );
+  return { result: `Filed for the owner: Tool problem: ${tool}.`, kind: "request" };
+}
 
 function publish(event: WorldEvent): void {
   saveEvents([event]);
@@ -424,13 +460,17 @@ export async function executeTool(
       }
       return updateFile("interests.md", args);
     case "build":
-      return runBuild(args, tick);
+      return withExample("build", args, runBuild(args, tick));
     case "design_blueprint":
-      return designBlueprint(
-        typeof args.name === "string" ? args.name : "",
-        args.spec,
-        tick,
-        typeof args.why === "string" ? args.why : undefined,
+      return withExample(
+        "design_blueprint",
+        args,
+        designBlueprint(
+          typeof args.name === "string" ? args.name : "",
+          args.spec,
+          tick,
+          typeof args.why === "string" ? args.why : undefined,
+        ),
       );
     case "preview_blueprint":
       return previewBlueprint(typeof args.name === "string" ? args.name : "", tick);
@@ -458,6 +498,8 @@ export async function executeTool(
       return proposeExpansion(args, tick);
     case "explore":
       return explorePlot(args, tick);
+    case "report_problem":
+      return reportProblem(args, tick);
     case "propose_mechanic":
       return propose("Mechanic", args, tick);
     default:

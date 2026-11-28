@@ -40,7 +40,7 @@ import {
   plotSeed,
   terrainOf,
 } from "@pips/shared";
-import { sqliteFile } from "./env.js";
+import { redactSecrets, sqliteFile } from "./env.js";
 import { runtimeConfig } from "./runtimeConfig.js";
 
 let db: Database.Database;
@@ -282,6 +282,17 @@ function migrate(): void {
       name TEXT NOT NULL,
       notes TEXT NOT NULL DEFAULT '',
       UNIQUE (grid_x, grid_z)
+    );
+
+    CREATE TABLE IF NOT EXISTS tool_calls (
+      id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      day INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      arguments_raw TEXT NOT NULL,
+      arguments_parsed TEXT NOT NULL,
+      error TEXT
     );
   `);
   ensureDiaryHidden();
@@ -1339,6 +1350,118 @@ export function savePlot(plot: PlotRecord): void {
   db.prepare(
     `UPDATE plots SET type = ?, status = ?, unlocked_at = ?, name = ?, notes = ? WHERE id = ?`,
   ).run(plot.type, plot.status, plot.unlockedAt, plot.name, plot.notes, plot.id);
+}
+
+export type ToolCallRow = {
+  id: string;
+  createdAt: string;
+  day: number;
+  model: string;
+  tool: string;
+  argumentsRaw: string;
+  argumentsParsed: string;
+  error: string | null;
+};
+
+export function recordToolCall(row: {
+  model: string;
+  tool: string;
+  raw: string;
+  parsed: unknown;
+  error: string | null;
+  day: number;
+}): void {
+  const parsedText = redactSecrets(typeof row.parsed === "string" ? row.parsed : JSON.stringify(row.parsed));
+  const error = row.error ? redactSecrets(row.error).slice(0, 800) : null;
+  db.prepare(
+    `INSERT INTO tool_calls (id, created_at, day, model, tool, arguments_raw, arguments_parsed, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    randomUUID(),
+    new Date().toISOString(),
+    row.day,
+    row.model.slice(0, 80),
+    row.tool.slice(0, 80),
+    redactSecrets(row.raw).slice(0, 2000),
+    parsedText.slice(0, 2000),
+    error,
+  );
+  const detail = error ? `error=${error}` : "ok";
+  console.log(
+    `Tool ${row.tool} model=${row.model} raw=${redactSecrets(row.raw).slice(0, 500)} parsed=${parsedText.slice(0, 500)} ${detail}`,
+  );
+}
+
+export function toolFailureCount(): number {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM tool_calls WHERE error IS NOT NULL`).get() as { n: number };
+  return row.n;
+}
+
+export function recentToolFailures(limit = 10): ToolCallRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, created_at, day, model, tool, arguments_raw, arguments_parsed, error
+       FROM tool_calls WHERE error IS NOT NULL
+       ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(limit) as Array<{
+    id: string;
+    created_at: string;
+    day: number;
+    model: string;
+    tool: string;
+    arguments_raw: string;
+    arguments_parsed: string;
+    error: string | null;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    createdAt: row.created_at,
+    day: row.day,
+    model: row.model,
+    tool: row.tool,
+    argumentsRaw: row.arguments_raw,
+    argumentsParsed: row.arguments_parsed,
+    error: row.error,
+  }));
+}
+
+export function toolFailuresForDay(day: number): ToolCallRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, created_at, day, model, tool, arguments_raw, arguments_parsed, error
+       FROM tool_calls WHERE error IS NOT NULL AND day = ?
+       ORDER BY created_at DESC LIMIT 10`,
+    )
+    .all(day) as Array<{
+    id: string;
+    created_at: string;
+    day: number;
+    model: string;
+    tool: string;
+    arguments_raw: string;
+    arguments_parsed: string;
+    error: string | null;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    createdAt: row.created_at,
+    day: row.day,
+    model: row.model,
+    tool: row.tool,
+    argumentsRaw: row.arguments_raw,
+    argumentsParsed: row.arguments_parsed,
+    error: row.error,
+  }));
+}
+
+export function latestToolRaw(tool: string): string {
+  const row = db
+    .prepare(
+      `SELECT arguments_raw FROM tool_calls WHERE tool = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(tool) as { arguments_raw: string } | undefined;
+  return row?.arguments_raw ?? "";
 }
 
 export function openFrontier(): void {

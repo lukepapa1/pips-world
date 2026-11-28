@@ -1,4 +1,4 @@
-import { isPaused, lastTickAt, slotStatus } from "./db.js";
+import { isPaused, lastTickAt, recentToolFailures, slotStatus, toolFailureCount } from "./db.js";
 import { duplicatesRejected } from "./duplicates.js";
 import { currentSlotId, startupLine } from "./growth.js";
 import { sinceLastTick } from "./clock.js";
@@ -30,6 +30,10 @@ export function statusLines(): string[] {
     `This slot is ${slot}${slotState ? ` (${slotState})` : ""}.`,
     `Calls today ${used.calls} of ${limits.calls}. Page reads ${used.reads} of ${config.dailyReadCap}. Searches ${used.searches} of ${config.dailySearchCap}. Builds ${used.builds} of ${config.dailyBuildCap}. Ticks ${used.ticks} of ${limits.ticks}.`,
     `Duplicates rejected today: ${duplicatesRejected()}.`,
+    `Tool errors: ${toolFailureCount()}.`,
+    ...recentToolFailures(10).map(
+      (row) => `Tool failure ${row.tool}: ${(row.error ?? "").replace(/\s+/g, " ").slice(0, 220)}`,
+    ),
     config.blueprintApproval
       ? "A new blueprint waits for approval before it goes live."
       : "A new blueprint goes live when Pip publishes it.",

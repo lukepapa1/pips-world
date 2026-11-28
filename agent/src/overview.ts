@@ -6,6 +6,8 @@ import {
   listEvents,
   listIdentityVersions,
   overviewFacts,
+  recentToolFailures,
+  toolFailureCount,
 } from "./db.js";
 import { interestCards } from "./interests.js";
 import { readMemory } from "./memory.js";
@@ -140,6 +142,11 @@ export function overviewPayload(revealPrivate: boolean) {
       creations: facts.creations,
       pagesRead: facts.pagesRead,
       activity: facts.activity,
+      toolErrors: toolFailureCount(),
+      toolFailures: recentToolFailures(10).map((row) => ({
+        tool: row.tool,
+        error: (row.error ?? "").replace(/\s+/g, " ").slice(0, 220),
+      })),
       private: revealPrivate
         ? {
             calls: callsToday(),

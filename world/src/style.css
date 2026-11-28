@@ -360,6 +360,15 @@ button:disabled {
   margin: 4px 0 8px;
 }
 
+.tool-failures {
+  margin: 8px 0 16px;
+  padding-left: 1.2em;
+}
+
+.tool-failures li {
+  margin: 4px 0;
+}
+
 #scrim {
   position: absolute;
   inset: 0;
